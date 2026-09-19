@@ -251,6 +251,67 @@ impl MediaRepository {
         conn.query_row("SELECT count(*) FROM media_files;", [], |row| row.get(0))
     }
 
+    /// Retrieve a single MediaItem by primary key id with complete metadata
+    pub fn get_by_id(conn: &Connection, id: i64) -> Result<Option<MediaItem>> {
+        let mut stmt = conn.prepare_cached(
+            r#"
+            SELECT 
+                id, library_id, file_path, directory, file_name, file_size,
+                file_modified_at, file_hash, mime_type, media_type,
+                width, height, duration, orientation,
+                captured_at, captured_at_local, timezone_offset,
+                latitude, longitude, altitude, geohash,
+                camera_make, camera_model, lens_model, focal_length, aperture, iso, exposure_time,
+                thumbnail_path, thumbnail_status, indexed_at, updated_at
+            FROM media_files
+            WHERE id = ?1
+            LIMIT 1;
+            "#,
+        )?;
+
+        let mut rows = stmt.query_map(params![id], |row| {
+            Ok(MediaItem {
+                id: Some(row.get(0)?),
+                library_id: row.get(1)?,
+                file_path: row.get(2)?,
+                directory: row.get(3)?,
+                file_name: row.get(4)?,
+                file_size: row.get(5)?,
+                file_modified_at: row.get(6)?,
+                file_hash: row.get(7)?,
+                mime_type: row.get(8)?,
+                media_type: row.get(9)?,
+                width: row.get(10)?,
+                height: row.get(11)?,
+                duration: row.get(12)?,
+                orientation: row.get(13)?,
+                captured_at: row.get(14)?,
+                captured_at_local: row.get(15)?,
+                timezone_offset: row.get(16)?,
+                latitude: row.get(17)?,
+                longitude: row.get(18)?,
+                altitude: row.get(19)?,
+                geohash: row.get(20)?,
+                camera_make: row.get(21)?,
+                camera_model: row.get(22)?,
+                lens_model: row.get(23)?,
+                focal_length: row.get(24)?,
+                aperture: row.get(25)?,
+                iso: row.get(26)?,
+                exposure_time: row.get(27)?,
+                thumbnail_path: row.get(28)?,
+                thumbnail_status: row.get(29)?,
+                indexed_at: row.get(30)?,
+                updated_at: row.get(31)?,
+            })
+        })?;
+
+        match rows.next() {
+            Some(res) => Ok(Some(res?)),
+            None => Ok(None),
+        }
+    }
+
     /// Multi-criteria parameterized search and filtering engine
     pub fn search_media(
         conn: &Connection,

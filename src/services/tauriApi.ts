@@ -159,6 +159,36 @@ export const tauriApi = {
     return await invoke<MediaItem[]>('search_media', { query });
   },
 
+  async getMediaItem(id: number): Promise<MediaItem | null> {
+    if (!isTauri()) {
+      return {
+        id,
+        library_id: 1,
+        file_path: `/mock/media/ITEM_${id}.JPG`,
+        directory: '/mock/media',
+        file_name: `ITEM_${id}.JPG`,
+        file_size: 5200000,
+        file_modified_at: Date.now() - 86400000,
+        file_hash: `hash_${id}`,
+        mime_type: 'image/jpeg',
+        media_type: 'photo',
+        orientation: 1,
+        captured_at: Date.now() - 86400000,
+        thumbnail_status: 'ready',
+        camera_make: 'Sony',
+        camera_model: 'ILCE-7M4',
+        lens_model: 'FE 24-70mm F2.8 GM II',
+        focal_length: 35.0,
+        aperture: 2.8,
+        iso: 100,
+        exposure_time: '1/250s',
+        indexed_at: Date.now(),
+        updated_at: Date.now(),
+      };
+    }
+    return await invoke<MediaItem | null>('get_media_item', { id });
+  },
+
   onIndexingProgress(callback: (event: IndexingProgressEvent) => void): Promise<UnlistenFn> {
     if (!isTauri()) {
       return Promise.resolve(() => {});

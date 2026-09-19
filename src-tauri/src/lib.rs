@@ -132,6 +132,7 @@ pub fn run() {
             commands::media::query_timeline_groups,
             commands::media::query_media_paged,
             commands::media::search_media,
+            commands::media::get_media_item,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

@@ -1,6 +1,7 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Map, Marker, NavigationControl } from 'maplibre-gl';
 import Supercluster from 'supercluster';
+import { X, Maximize2, Info } from 'lucide-react';
 import { tauriApi } from '../../services/tauriApi';
 import { SpatialClusterPoint, MediaItem } from '../../types/media';
 import { useLibraryStore } from '../../stores/libraryStore';
@@ -197,7 +198,13 @@ export const MapView: React.FC = () => {
         // Individual media pin
         const point = cluster.properties.point as SpatialClusterPoint;
         el.className = 'map-pin-marker';
-        el.innerText = point.media_type === 'video' ? '🎬' : '📷';
+        el.style.display = 'flex';
+        el.style.alignItems = 'center';
+        el.style.justifyContent = 'center';
+        el.innerHTML =
+          point.media_type === 'video'
+            ? `<svg width="15" height="15" viewBox="0 0 24 24" fill="currentColor" stroke="none"><polygon points="6 3 20 12 6 21 6 3"/></svg>`
+            : `<svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><rect width="18" height="18" x="3" y="3" rx="2" ry="2"/><circle cx="9" cy="9" r="2"/><path d="m21 15-3.086-3.086a2 2 0 0 0-2.828 0L6 21"/></svg>`;
 
         el.addEventListener('click', () => {
           setSelectedPoint(point);
@@ -235,15 +242,25 @@ export const MapView: React.FC = () => {
     };
   };
 
-  const handleInspectMedia = () => {
+  const handleInspectMedia = async () => {
     if (!selectedPoint) return;
-    setSelectedItem(toMediaItem(selectedPoint));
+    try {
+      const realItem = await tauriApi.getMediaItem(selectedPoint.id);
+      setSelectedItem(realItem || toMediaItem(selectedPoint));
+    } catch {
+      setSelectedItem(toMediaItem(selectedPoint));
+    }
     setSelectedPoint(null);
   };
 
-  const handleOpenLightbox = () => {
+  const handleOpenLightbox = async () => {
     if (!selectedPoint) return;
-    openLightbox([toMediaItem(selectedPoint)], 0);
+    try {
+      const realItem = await tauriApi.getMediaItem(selectedPoint.id);
+      openLightbox([realItem || toMediaItem(selectedPoint)], 0);
+    } catch {
+      openLightbox([toMediaItem(selectedPoint)], 0);
+    }
   };
 
   return (
@@ -324,15 +341,17 @@ export const MapView: React.FC = () => {
             </div>
           </div>
 
-          <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn-primary" onClick={handleOpenLightbox} style={{ padding: '6px 12px', fontSize: '0.75rem' }}>
+          <div style={{ display: 'flex', gap: 8, alignItems: 'center' }}>
+            <button className="btn-primary" onClick={handleOpenLightbox} style={{ padding: '6px 12px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 5 }}>
+              <Maximize2 size={13} />
               View
             </button>
-            <button className="btn-secondary" onClick={handleInspectMedia} style={{ padding: '6px 10px', fontSize: '0.75rem' }}>
+            <button className="btn-secondary" onClick={handleInspectMedia} style={{ padding: '6px 10px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 5 }}>
+              <Info size={13} />
               Inspect
             </button>
-            <button className="btn-secondary" onClick={() => setSelectedPoint(null)} style={{ padding: '6px 10px', fontSize: '0.75rem' }}>
-              ✕
+            <button className="btn-secondary" onClick={() => setSelectedPoint(null)} style={{ padding: '6px 8px', display: 'flex', alignItems: 'center' }} title="Close preview">
+              <X size={14} />
             </button>
           </div>
         </div>

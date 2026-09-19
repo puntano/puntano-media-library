@@ -1,5 +1,6 @@
 import React, { useState } from 'react';
 import { open } from '@tauri-apps/plugin-dialog';
+import { FolderOpen } from 'lucide-react';
 import { useLibraryStore } from '../../stores/libraryStore';
 import { tauriApi, isTauri } from '../../services/tauriApi';
 
@@ -115,9 +116,10 @@ export const IndexingPanel: React.FC<{ onClose: () => void }> = ({ onClose }) =>
               onClick={handleBrowseFolder}
               disabled={isIndexing}
               type="button"
-              style={{ whiteSpace: 'nowrap' }}
+              style={{ whiteSpace: 'nowrap', display: 'flex', alignItems: 'center', gap: 6 }}
             >
-              📁 Browse...
+              <FolderOpen size={14} />
+              Browse...
             </button>
           </div>
         </div>

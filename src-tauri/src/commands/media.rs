@@ -59,3 +59,15 @@ pub fn search_media(
 
     MediaRepository::search_media(&conn, &query).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn get_media_item(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<Option<MediaItem>, String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+
+    MediaRepository::get_by_id(&conn, id).map_err(|e| e.to_string())
+}
+
