@@ -11,7 +11,7 @@ use rusqlite::Connection;
 use xxhash_rust::xxh64::Xxh64;
 
 use crate::db::MediaRepository;
-use crate::indexer::walker::{DirectoryWalker, DiscoveredFile};
+use crate::indexer::walker::DirectoryWalker;
 use crate::metadata::{PhotoMetadataParser, VideoMetadataParser};
 use crate::models::{IndexingProgressEvent, MediaItem};
 

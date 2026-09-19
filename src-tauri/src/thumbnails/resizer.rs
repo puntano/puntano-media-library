@@ -1,6 +1,5 @@
 use std::fs::File;
 use std::io::BufWriter;
-use std::num::NonZeroU32;
 use std::path::Path;
 
 use fast_image_resize::images::Image;
@@ -37,10 +36,7 @@ impl ThumbnailResizer {
         // Convert DynamicImage to fast_image_resize Image
         let src_image = Self::dynamic_image_to_fir(&img)?;
 
-        let target_w_nz = NonZeroU32::new(target_w).ok_or("Invalid target width")?;
-        let target_h_nz = NonZeroU32::new(target_h).ok_or("Invalid target height")?;
-
-        let mut dst_image = Image::new(target_w_nz, target_h_nz, src_image.pixel_type());
+        let mut dst_image = Image::new(target_w, target_h, src_image.pixel_type());
 
         // Fast SIMD-accelerated resize
         let mut resizer = Resizer::new();
@@ -91,21 +87,21 @@ impl ThumbnailResizer {
     fn dynamic_image_to_fir(img: &DynamicImage) -> Result<Image<'static>, String> {
         match img {
             DynamicImage::ImageRgb8(rgb) => {
-                let w = NonZeroU32::new(rgb.width()).ok_or("Zero width")?;
-                let h = NonZeroU32::new(rgb.height()).ok_or("Zero height")?;
+                let w = rgb.width();
+                let h = rgb.height();
                 Ok(Image::from_vec_u8(w, h, rgb.clone().into_raw(), PixelType::U8x3)
                     .map_err(|e| format!("FIR buffer creation failed: {}", e))?)
             }
             DynamicImage::ImageRgba8(rgba) => {
-                let w = NonZeroU32::new(rgba.width()).ok_or("Zero width")?;
-                let h = NonZeroU32::new(rgba.height()).ok_or("Zero height")?;
+                let w = rgba.width();
+                let h = rgba.height();
                 Ok(Image::from_vec_u8(w, h, rgba.clone().into_raw(), PixelType::U8x4)
                     .map_err(|e| format!("FIR buffer creation failed: {}", e))?)
             }
             _ => {
                 let rgba = img.to_rgba8();
-                let w = NonZeroU32::new(rgba.width()).ok_or("Zero width")?;
-                let h = NonZeroU32::new(rgba.height()).ok_or("Zero height")?;
+                let w = rgba.width();
+                let h = rgba.height();
                 Ok(Image::from_vec_u8(w, h, rgba.into_raw(), PixelType::U8x4)
                     .map_err(|e| format!("FIR buffer creation failed: {}", e))?)
             }

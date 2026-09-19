@@ -1,8 +1,8 @@
 use std::fs::File;
-use std::io::{BufReader, Read, Seek, SeekFrom};
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
-use chrono::{NaiveDateTime, TimeZone, Utc};
-use nom_exif::{ExifIter, ExifTag, MediaParser, MediaSource, ParsedExifValue};
+use chrono::NaiveDateTime;
+use nom_exif::{EntryValue, MediaParser, MediaSource, TrackInfo, TrackInfoTag};
 
 #[derive(Default, Debug)]
 pub struct ExtractedVideoMetadata {
@@ -23,17 +23,10 @@ impl VideoMetadataParser {
     pub fn parse<P: AsRef<Path>>(path: P) -> ExtractedVideoMetadata {
         let mut meta = ExtractedVideoMetadata::default();
 
-        let file = match File::open(path.as_ref()) {
-            Ok(f) => f,
-            Err(_) => return meta,
-        };
-
-        let reader = BufReader::new(file);
         let mut parser = MediaParser::new();
-
-        if let Ok(ms) = MediaSource::seekable(reader) {
-            if let Ok(iter) = parser.parse(ms) {
-                Self::extract_from_iter(iter, &mut meta);
+        if let Ok(ms) = MediaSource::open(path.as_ref()) {
+            if let Ok(track) = parser.parse_track(ms) {
+                Self::extract_from_track(&track, &mut meta);
             }
         }
 
@@ -47,51 +40,54 @@ impl VideoMetadataParser {
         meta
     }
 
-    fn extract_from_iter(iter: ExifIter, meta: &mut ExtractedVideoMetadata) {
-        for entry in iter {
-            let tag = entry.tag();
-            let val = entry.value();
+    fn extract_from_track(track: &TrackInfo, meta: &mut ExtractedVideoMetadata) {
+        if let Some(gps) = track.gps_info() {
+            if let Some(lat) = gps.latitude.to_decimal_degrees() {
+                meta.latitude = Some(lat * gps.latitude_ref.sign());
+            }
+            if let Some(lon) = gps.longitude.to_decimal_degrees() {
+                meta.longitude = Some(lon * gps.longitude_ref.sign());
+            }
+            meta.altitude = gps.altitude.meters();
+        }
 
-            match tag {
-                Some(ExifTag::CreateDate) | Some(ExifTag::DateTimeOriginal) => {
-                    if meta.captured_at.is_none() {
-                        if let ParsedExifValue::Time(t) = val {
-                            meta.captured_at_local = Some(t.to_rfc3339());
-                            meta.captured_at = Some(t.timestamp_millis());
-                        }
-                    }
+        if let Some(val) = track.get(TrackInfoTag::CreateDate) {
+            match val {
+                EntryValue::DateTime(dt) => {
+                    meta.captured_at_local = Some(dt.to_rfc3339());
+                    meta.captured_at = Some(dt.timestamp_millis());
                 }
-                Some(ExifTag::GpsLatitude) => {
-                    if let ParsedExifValue::GpsCoord(coord) = val {
-                        meta.latitude = Some(coord.0);
-                    }
+                EntryValue::NaiveDateTime(ndt) => {
+                    meta.captured_at_local = Some(ndt.to_string());
+                    meta.captured_at = Some(ndt.and_utc().timestamp_millis());
                 }
-                Some(ExifTag::GpsLongitude) => {
-                    if let ParsedExifValue::GpsCoord(coord) = val {
-                        meta.longitude = Some(coord.0);
-                    }
-                }
-                Some(ExifTag::GpsAltitude) => {
-                    if let ParsedExifValue::Rational(r) = val {
-                        meta.altitude = Some(r.to_f64());
-                    }
-                }
-                Some(ExifTag::ImageWidth) => {
-                    if let ParsedExifValue::U32(w) = val {
-                        meta.width = Some(*w);
-                    }
-                }
-                Some(ExifTag::ImageHeight) => {
-                    if let ParsedExifValue::U32(h) = val {
-                        meta.height = Some(*h);
-                    }
-                }
-                Some(ExifTag::Duration) => {
-                    if let ParsedExifValue::Rational(r) = val {
-                        meta.duration = Some(r.to_f64());
+                EntryValue::Text(s) => {
+                    meta.captured_at_local = Some(s.clone());
+                    if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y:%m:%d %H:%M:%S") {
+                        meta.captured_at = Some(ndt.and_utc().timestamp_millis());
                     }
                 }
                 _ => {}
+            }
+        }
+
+        if let Some(val) = track.get(TrackInfoTag::DurationMs) {
+            if let EntryValue::U64(ms) = val {
+                meta.duration = Some(*ms as f64 / 1000.0);
+            } else if let EntryValue::U32(ms) = val {
+                meta.duration = Some(*ms as f64 / 1000.0);
+            }
+        }
+
+        if let Some(val) = track.get(TrackInfoTag::Width) {
+            if let EntryValue::U32(w) = val {
+                meta.width = Some(*w);
+            }
+        }
+
+        if let Some(val) = track.get(TrackInfoTag::Height) {
+            if let EntryValue::U32(h) = val {
+                meta.height = Some(*h);
             }
         }
     }

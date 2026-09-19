@@ -42,7 +42,8 @@ pub fn run() {
                     return Response::builder()
                         .header(header::CONTENT_TYPE, "image/webp")
                         .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
-                        .body(bytes);
+                        .body(bytes)
+                        .unwrap();
                 }
             }
 
@@ -51,6 +52,7 @@ pub fn run() {
                 .status(404)
                 .header(header::CONTENT_TYPE, "text/plain")
                 .body(b"Thumbnail not ready".to_vec())
+                .unwrap()
         })
         .setup(move |app| {
             // Locate or create application data & cache directories
@@ -95,7 +97,7 @@ pub fn run() {
 
             // Spawn background live filesystem watcher for registered library folders
             let watched_libraries = {
-                let mut stmt = conn.prepare("SELECT path FROM libraries WHERE is_active = 1;").ok();
+                let stmt = conn.prepare("SELECT path FROM libraries WHERE is_active = 1;").ok();
                 stmt.map(|mut s| {
                     s.query_map([], |row| row.get::<_, String>(0))
                         .ok()

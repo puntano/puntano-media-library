@@ -1,8 +1,6 @@
-use std::fs::File;
-use std::io::BufReader;
 use std::path::Path;
-use chrono::{NaiveDateTime, TimeZone, Utc};
-use nom_exif::{ExifIter, ExifTag, MediaParser, MediaSource, ParsedExifValue};
+use chrono::NaiveDateTime;
+use nom_exif::{EntryValue, Exif, ExifTag, MediaParser, MediaSource};
 
 #[derive(Default, Debug)]
 pub struct ExtractedPhotoMetadata {
@@ -34,116 +32,126 @@ impl PhotoMetadataParser {
             ..Default::default()
         };
 
-        let file = match File::open(path.as_ref()) {
-            Ok(f) => f,
-            Err(_) => return meta,
-        };
-
-        let reader = BufReader::new(file);
         let mut parser = MediaParser::new();
-
-        let ms = match MediaSource::seekable(reader) {
+        let ms = match MediaSource::open(path.as_ref()) {
             Ok(ms) => ms,
             Err(_) => return meta,
         };
 
-        if let Ok(iter) = parser.parse(ms) {
-            Self::extract_from_iter(iter, &mut meta);
+        if let Ok(iter) = parser.parse_exif(ms) {
+            let exif: Exif = iter.into();
+            Self::extract_from_exif(&exif, &mut meta);
         }
 
         meta
     }
 
-    fn extract_from_iter(iter: ExifIter, meta: &mut ExtractedPhotoMetadata) {
-        for entry in iter {
-            let tag = entry.tag();
-            let val = entry.value();
+    fn extract_from_exif(exif: &Exif, meta: &mut ExtractedPhotoMetadata) {
+        // High-precision GPS parsing
+        if let Some(gps) = exif.gps_info() {
+            if let Some(lat) = gps.latitude.to_decimal_degrees() {
+                meta.latitude = Some(lat * gps.latitude_ref.sign());
+            }
+            if let Some(lon) = gps.longitude.to_decimal_degrees() {
+                meta.longitude = Some(lon * gps.longitude_ref.sign());
+            }
+            meta.altitude = gps.altitude.meters();
+        }
 
-            match tag {
-                Some(ExifTag::DateTimeOriginal) | Some(ExifTag::CreateDate) => {
-                    if meta.captured_at.is_none() {
-                        if let ParsedExifValue::Time(t) = val {
-                            let dt_str = t.to_rfc3339();
-                            meta.captured_at_local = Some(dt_str);
-                            meta.captured_at = Some(t.timestamp_millis());
-                        } else if let ParsedExifValue::String(s) = val {
-                            meta.captured_at_local = Some(s.clone());
-                            if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y:%m:%d %H:%M:%S") {
-                                meta.captured_at = Some(Utc.from_utc_datetime(&ndt).timestamp_millis());
-                            }
-                        }
-                    }
+        // Captured date & time
+        if let Some(val) = exif.get(ExifTag::DateTimeOriginal).or_else(|| exif.get(ExifTag::CreateDate)) {
+            match val {
+                EntryValue::DateTime(dt) => {
+                    meta.captured_at_local = Some(dt.to_rfc3339());
+                    meta.captured_at = Some(dt.timestamp_millis());
                 }
-                Some(ExifTag::GpsLatitude) => {
-                    if let ParsedExifValue::GpsCoord(coord) = val {
-                        meta.latitude = Some(coord.0);
-                    }
+                EntryValue::NaiveDateTime(ndt) => {
+                    meta.captured_at_local = Some(ndt.to_string());
+                    meta.captured_at = Some(ndt.and_utc().timestamp_millis());
                 }
-                Some(ExifTag::GpsLongitude) => {
-                    if let ParsedExifValue::GpsCoord(coord) = val {
-                        meta.longitude = Some(coord.0);
-                    }
-                }
-                Some(ExifTag::GpsAltitude) => {
-                    if let ParsedExifValue::Rational(r) = val {
-                        meta.altitude = Some(r.to_f64());
-                    }
-                }
-                Some(ExifTag::Orientation) => {
-                    if let ParsedExifValue::U16(o) = val {
-                        meta.orientation = *o as u32;
-                    } else if let ParsedExifValue::U32(o) = val {
-                        meta.orientation = *o;
-                    }
-                }
-                Some(ExifTag::Make) => {
-                    if let ParsedExifValue::String(s) = val {
-                        meta.camera_make = Some(s.trim().to_string());
-                    }
-                }
-                Some(ExifTag::Model) => {
-                    if let ParsedExifValue::String(s) = val {
-                        meta.camera_model = Some(s.trim().to_string());
-                    }
-                }
-                Some(ExifTag::LensModel) => {
-                    if let ParsedExifValue::String(s) = val {
-                        meta.lens_model = Some(s.trim().to_string());
-                    }
-                }
-                Some(ExifTag::FocalLength) => {
-                    if let ParsedExifValue::Rational(r) = val {
-                        meta.focal_length = Some(r.to_f64());
-                    }
-                }
-                Some(ExifTag::FNumber) => {
-                    if let ParsedExifValue::Rational(r) = val {
-                        meta.aperture = Some(r.to_f64());
-                    }
-                }
-                Some(ExifTag::IsoSpeedRatings) => {
-                    if let ParsedExifValue::U32(i) = val {
-                        meta.iso = Some(*i);
-                    } else if let ParsedExifValue::U16(i) = val {
-                        meta.iso = Some(*i as u32);
-                    }
-                }
-                Some(ExifTag::ExposureTime) => {
-                    if let ParsedExifValue::Rational(r) = val {
-                        meta.exposure_time = Some(format!("{}/{}", r.numer(), r.denom()));
-                    }
-                }
-                Some(ExifTag::ImageWidth) => {
-                    if let ParsedExifValue::U32(w) = val {
-                        meta.width = Some(*w);
-                    }
-                }
-                Some(ExifTag::ImageHeight) => {
-                    if let ParsedExifValue::U32(h) = val {
-                        meta.height = Some(*h);
+                EntryValue::Text(s) => {
+                    meta.captured_at_local = Some(s.clone());
+                    if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y:%m:%d %H:%M:%S") {
+                        meta.captured_at = Some(ndt.and_utc().timestamp_millis());
                     }
                 }
                 _ => {}
+            }
+        }
+
+        // Orientation
+        if let Some(val) = exif.get(ExifTag::Orientation) {
+            if let EntryValue::U16(o) = val {
+                meta.orientation = *o as u32;
+            } else if let EntryValue::U32(o) = val {
+                meta.orientation = *o;
+            }
+        }
+
+        // Camera Make
+        if let Some(val) = exif.get(ExifTag::Make) {
+            if let Some(s) = val.as_str() {
+                meta.camera_make = Some(s.trim().to_string());
+            }
+        }
+
+        // Camera Model
+        if let Some(val) = exif.get(ExifTag::Model) {
+            if let Some(s) = val.as_str() {
+                meta.camera_model = Some(s.trim().to_string());
+            }
+        }
+
+        // Lens Model
+        if let Some(val) = exif.get(ExifTag::LensModel) {
+            if let Some(s) = val.as_str() {
+                meta.lens_model = Some(s.trim().to_string());
+            }
+        }
+
+        // Focal Length
+        if let Some(val) = exif.get(ExifTag::FocalLength) {
+            if let EntryValue::URational(r) = val {
+                meta.focal_length = r.to_f64();
+            }
+        }
+
+        // Aperture / FNumber
+        if let Some(val) = exif.get(ExifTag::FNumber) {
+            if let EntryValue::URational(r) = val {
+                meta.aperture = r.to_f64();
+            }
+        }
+
+        // ISO
+        if let Some(val) = exif.get(ExifTag::ISOSpeedRatings) {
+            if let EntryValue::U32(i) = val {
+                meta.iso = Some(*i);
+            } else if let EntryValue::U16(i) = val {
+                meta.iso = Some(*i as u32);
+            }
+        }
+
+        // Exposure Time
+        if let Some(val) = exif.get(ExifTag::ExposureTime) {
+            if let EntryValue::URational(r) = val {
+                meta.exposure_time = Some(format!("{}/{}", r.numerator(), r.denominator()));
+            }
+        }
+
+        // Dimensions
+        if let Some(val) = exif.get(ExifTag::ImageWidth) {
+            if let EntryValue::U32(w) = val {
+                meta.width = Some(*w);
+            } else if let EntryValue::U16(w) = val {
+                meta.width = Some(*w as u32);
+            }
+        }
+        if let Some(val) = exif.get(ExifTag::ImageHeight) {
+            if let EntryValue::U32(h) = val {
+                meta.height = Some(*h);
+            } else if let EntryValue::U16(h) = val {
+                meta.height = Some(*h as u32);
             }
         }
     }
