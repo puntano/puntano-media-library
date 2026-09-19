@@ -22,6 +22,27 @@
 
 ---
 
+## 💾 Download & Installation
+
+Pre-compiled production binaries for Windows (x64) are generated in the release bundle:
+
+| Package Type | File | Description |
+| :--- | :--- | :--- |
+| **Setup Wizard (Recommended)** | `Puntano Media Library_0.1.0_x64-setup.exe` | Standard Windows NSIS installer with desktop shortcut and Start menu entry (~4.3 MB). |
+| **Enterprise Installer** | `Puntano Media Library_0.1.0_x64_en-US.msi` | Windows Installer package suitable for unattended or enterprise deployments (~6.0 MB). |
+| **Portable Executable** | `puntano-media-library.exe` | Standalone binary with embedded UI assets. Requires no installation—run directly from any folder or USB drive (~18.7 MB). |
+
+### How to Install on Windows
+1. Download the setup file (`.exe` or `.msi`).
+2. Double-click the installer and follow the prompt instructions.
+3. **Note on Windows SmartScreen:** Because this local build is self-signed, Windows SmartScreen may show a *"Windows protected your PC"* prompt on first launch. Click **"More info"** and then **"Run anyway"**.
+
+### How to Share with Others
+- **Option A (GitHub Releases):** Create a new release in your GitHub repository and upload the generated `.exe` and `.msi` files from `src-tauri/target/release/bundle/`.
+- **Option B (Direct Sharing):** Send the `Puntano Media Library_0.1.0_x64-setup.exe` file directly via Google Drive, OneDrive, or USB stick. Recipients do not need Node.js, Rust, or C++ installed.
+
+---
+
 ## Technical Stack & Version Target
 
 | Layer | Technology | Latest Version | Role |
@@ -189,10 +210,14 @@ This will compile the Rust backend, bind to the local SQLite database (`puntano.
 To create optimized production bundles:
 
 ```bash
-# On Windows: Generates .msi and .exe installers in src-tauri/target/release/bundle/
-# On macOS: Generates .dmg and .app universal binaries
 npm run tauri build
 ```
+
+The build command outputs:
+- **Windows Setup Wizard:** `src-tauri/target/release/bundle/nsis/Puntano Media Library_0.1.0_x64-setup.exe`
+- **Windows MSI Installer:** `src-tauri/target/release/bundle/msi/Puntano Media Library_0.1.0_x64_en-US.msi`
+- **Standalone Binary:** `src-tauri/target/release/puntano-media-library.exe`
+- **macOS (when built on Mac):** `.dmg` disk image and `.app` bundle in `src-tauri/target/release/bundle/dmg/`
 
 ---
 
