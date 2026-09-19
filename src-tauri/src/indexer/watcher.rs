@@ -107,7 +107,7 @@ impl LibraryWatcher {
 
         // Dynamically match against registered libraries
         let library_id: i64 = {
-            let mut stmt = conn.prepare_cached("SELECT id, path FROM libraries WHERE is_active = 1;").ok();
+            let stmt = conn.prepare_cached("SELECT id, path FROM libraries WHERE is_active = 1;").ok();
             stmt.and_then(|mut s| {
                 s.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))
                     .ok()

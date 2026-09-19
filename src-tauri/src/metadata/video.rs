@@ -139,7 +139,10 @@ impl VideoMetadataParser {
         if !signs.is_empty() {
             let lat_str = &trimmed[0..signs[0]];
             let remainder = &trimmed[signs[0]..];
-            let end_lon = remainder.find(|c| c == '+' || c == '-' || c == '/').unwrap_or(remainder.len());
+            let end_lon = remainder[1..]
+                .find(|c| c == '+' || c == '-' || c == '/')
+                .map(|idx| idx + 1)
+                .unwrap_or(remainder.len());
             let lon_str = &remainder[0..end_lon];
 
             if let (Ok(lat), Ok(lon)) = (lat_str.parse::<f64>(), lon_str.parse::<f64>()) {

@@ -121,20 +121,22 @@ pub async fn prune_missing_files(state: State<'_, AppState>) -> Result<u64, Stri
         let mut conn = DatabaseManager::open(&db_path)
             .map_err(|e| format!("Failed to open DB: {}", e))?;
 
-        let mut stmt = conn
-            .prepare("SELECT id, file_path FROM media_files;")
-            .map_err(|e| e.to_string())?;
-
-        let rows = stmt
-            .query_map([], |row| {
-                Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
-            })
-            .map_err(|e| e.to_string())?;
-
         let mut missing_ids = Vec::new();
-        for r in rows.flatten() {
-            if !std::path::Path::new(&r.1).exists() {
-                missing_ids.push(r.0);
+        {
+            let mut stmt = conn
+                .prepare("SELECT id, file_path FROM media_files;")
+                .map_err(|e| e.to_string())?;
+
+            let rows = stmt
+                .query_map([], |row| {
+                    Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?))
+                })
+                .map_err(|e| e.to_string())?;
+
+            for r in rows.flatten() {
+                if !std::path::Path::new(&r.1).exists() {
+                    missing_ids.push(r.0);
+                }
             }
         }
 
