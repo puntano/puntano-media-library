@@ -93,6 +93,24 @@ pub fn run() {
                 cancel_worker,
             );
 
+            // Spawn background live filesystem watcher for registered library folders
+            let watched_libraries = {
+                let mut stmt = conn.prepare("SELECT path FROM libraries WHERE is_active = 1;").ok();
+                stmt.map(|mut s| {
+                    s.query_map([], |row| row.get::<_, String>(0))
+                        .ok()
+                        .map(|iter| iter.flatten().map(std::path::PathBuf::from).collect::<Vec<_>>())
+                        .unwrap_or_default()
+                }).unwrap_or_default()
+            };
+
+            crate::indexer::LibraryWatcher::start_watching(
+                app.handle().clone(),
+                db_path.clone(),
+                watched_libraries,
+                cancel_token.clone(),
+            );
+
             app.manage(AppState {
                 db_path,
                 cancel_token,
