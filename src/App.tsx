@@ -6,6 +6,7 @@ import { VirtualGallery } from './components/gallery/VirtualGallery';
 import { IndexingPanel } from './components/indexing/IndexingPanel';
 import { MetadataDrawer } from './components/inspector/MetadataDrawer';
 import { FilterBar } from './components/search/FilterBar';
+import { LightboxModal } from './components/viewer/LightboxModal';
 
 export const App: React.FC = () => {
   const { activeView, setActiveView, mediaTypeFilter, setMediaTypeFilter, totalMediaCount } = useLibraryStore();
@@ -174,6 +175,9 @@ export const App: React.FC = () => {
 
       {/* Slide-Over Metadata Inspector */}
       <MetadataDrawer />
+
+      {/* Fullscreen Media Lightbox */}
+      <LightboxModal />
     </div>
   );
 };

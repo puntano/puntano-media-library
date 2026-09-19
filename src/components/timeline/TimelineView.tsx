@@ -11,7 +11,7 @@ export const TimelineView: React.FC = () => {
   const [selectedYearFilter, setSelectedYearFilter] = useState<string>('all');
   const [isLoadingItems, setIsLoadingItems] = useState<boolean>(false);
 
-  const { setSelectedItem } = useLibraryStore();
+  const { setSelectedItem, openLightbox } = useLibraryStore();
 
   useEffect(() => {
     tauriApi.queryTimelineGroups().then((data) => {
@@ -171,10 +171,12 @@ export const TimelineView: React.FC = () => {
               gap: 16,
             }}
           >
-            {items.map((item) => (
+            {items.map((item, idx) => (
               <div
                 key={item.id}
                 onClick={() => setSelectedItem(item)}
+                onDoubleClick={() => openLightbox(items, idx)}
+                title="Double click to open fullscreen lightbox"
                 className="glass-panel"
                 style={{
                   aspectRatio: '1',

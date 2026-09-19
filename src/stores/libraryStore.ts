@@ -16,6 +16,10 @@ interface LibraryState {
   dateFrom: number | null;
   dateTo: number | null;
 
+  // Fullscreen Lightbox State
+  lightboxIndex: number | null;
+  lightboxItems: MediaItem[];
+
   setActiveView: (view: 'map' | 'timeline' | 'gallery') => void;
   setTotalMediaCount: (count: number) => void;
   setIsIndexing: (isIndexing: boolean) => void;
@@ -28,9 +32,14 @@ interface LibraryState {
   setHasGpsOnly: (hasGps: boolean) => void;
   setDateRange: (from: number | null, to: number | null) => void;
   clearFilters: () => void;
+
+  openLightbox: (items: MediaItem[], index: number) => void;
+  closeLightbox: () => void;
+  nextLightboxItem: () => void;
+  prevLightboxItem: () => void;
 }
 
-export const useLibraryStore = create<LibraryState>((set) => ({
+export const useLibraryStore = create<LibraryState>((set, get) => ({
   activeView: 'map',
   totalMediaCount: 0,
   isIndexing: false,
@@ -43,6 +52,9 @@ export const useLibraryStore = create<LibraryState>((set) => ({
   hasGpsOnly: false,
   dateFrom: null,
   dateTo: null,
+
+  lightboxIndex: null,
+  lightboxItems: [],
 
   setActiveView: (view) => set({ activeView: view }),
   setTotalMediaCount: (count) => set({ totalMediaCount: count }),
@@ -63,4 +75,26 @@ export const useLibraryStore = create<LibraryState>((set) => ({
       dateTo: null,
       mediaTypeFilter: 'all',
     }),
+
+  openLightbox: (items, index) =>
+    set({
+      lightboxItems: items,
+      lightboxIndex: Math.max(0, Math.min(index, items.length - 1)),
+    }),
+
+  closeLightbox: () => set({ lightboxIndex: null }),
+
+  nextLightboxItem: () => {
+    const { lightboxIndex, lightboxItems } = get();
+    if (lightboxIndex !== null && lightboxIndex < lightboxItems.length - 1) {
+      set({ lightboxIndex: lightboxIndex + 1 });
+    }
+  },
+
+  prevLightboxItem: () => {
+    const { lightboxIndex } = get();
+    if (lightboxIndex !== null && lightboxIndex > 0) {
+      set({ lightboxIndex: lightboxIndex - 1 });
+    }
+  },
 }));

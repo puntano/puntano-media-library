@@ -4,10 +4,12 @@ import { tauriApi } from '../../services/tauriApi';
 import { MediaItem } from '../../types/media';
 
 import { getThumbnailUrl } from '../../services/thumbnailProtocol';
+import { useLibraryStore } from '../../stores/libraryStore';
 
 export const VirtualGallery: React.FC = () => {
   const parentRef = useRef<HTMLDivElement>(null);
   const [items, setItems] = useState<MediaItem[]>([]);
+  const { openLightbox } = useLibraryStore();
   const COLUMNS = 5;
 
   useEffect(() => {
@@ -63,9 +65,10 @@ export const VirtualGallery: React.FC = () => {
                 paddingBottom: 16,
               }}
             >
-              {rowItems.map((item) => (
+              {rowItems.map((item, idx) => (
                 <div
                   key={item.id}
+                  onClick={() => openLightbox(items, startIndex + idx)}
                   className="glass-panel"
                   style={{
                     borderRadius: 'var(--radius-md)',
