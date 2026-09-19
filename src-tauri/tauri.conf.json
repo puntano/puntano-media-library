@@ -23,7 +23,11 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' asset: http://asset.localhost blob: data: https://*.tile.openstreetmap.org https://demotiles.maplibre.org puntano-thumb: http://puntano-thumb.localhost"
+      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' asset: http://asset.localhost blob: data: https://*.tile.openstreetmap.org https://demotiles.maplibre.org puntano-thumb: http://puntano-thumb.localhost",
+      "assetProtocol": {
+        "enable": true,
+        "scope": ["**"]
+      }
     }
   },
   "bundle": {

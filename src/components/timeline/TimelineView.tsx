@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
 import { Film, Image as ImageIcon, Calendar } from 'lucide-react';
-import { tauriApi } from '../../services/tauriApi';
+import { convertFileSrc } from '@tauri-apps/api/core';
+import { tauriApi, isTauri } from '../../services/tauriApi';
 import { MediaItem, TimelineGroup, MediaFilterQuery } from '../../types/media';
 import { useLibraryStore } from '../../stores/libraryStore';
 import { getThumbnailUrl } from '../../services/thumbnailProtocol';
@@ -239,6 +240,15 @@ export const TimelineView: React.FC = () => {
                     src={getThumbnailUrl(item.file_hash, item.media_type)}
                     alt={item.file_name}
                     loading="lazy"
+                    onError={(e) => {
+                      const imgEl = e.target as HTMLImageElement;
+                      if (isTauri() && !imgEl.src.includes('asset.localhost') && !imgEl.src.startsWith('asset://')) {
+                        try {
+                          imgEl.src = convertFileSrc(item.file_path);
+                          return;
+                        } catch {}
+                      }
+                    }}
                     style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                   />
                   <div

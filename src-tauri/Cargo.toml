@@ -14,7 +14,7 @@ tauri-build = { version = "2.1", features = [] }
 
 [dependencies]
 # Tauri Core
-tauri = { version = "2.1", features = [] }
+tauri = { version = "2.1", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 

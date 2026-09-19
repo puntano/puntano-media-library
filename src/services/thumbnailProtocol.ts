@@ -2,6 +2,12 @@ import { isTauri } from './tauriApi';
 
 export function getThumbnailUrl(fileHash: string, mediaType: string = 'photo'): string {
   if (isTauri()) {
+    // Windows WebView2 handles custom URI schemes via http://<scheme>.localhost/
+    // macOS/Linux handle them via <scheme>://localhost/
+    const isWindows = typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows');
+    if (isWindows) {
+      return `http://puntano-thumb.localhost/${fileHash}.webp`;
+    }
     return `puntano-thumb://localhost/${fileHash}.webp`;
   }
 

@@ -1,7 +1,8 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Search, Image as ImageIcon, Film, RotateCcw } from 'lucide-react';
-import { tauriApi } from '../../services/tauriApi';
+import { convertFileSrc } from '@tauri-apps/api/core';
+import { tauriApi, isTauri } from '../../services/tauriApi';
 import { MediaItem, MediaFilterQuery } from '../../types/media';
 import { getThumbnailUrl } from '../../services/thumbnailProtocol';
 import { useLibraryStore } from '../../stores/libraryStore';
@@ -237,7 +238,13 @@ export const VirtualGallery: React.FC = () => {
                         transition: 'opacity 0.2s ease',
                       }}
                       onError={(e) => {
-                        (e.target as HTMLElement).style.display = 'none';
+                        const imgEl = e.target as HTMLImageElement;
+                        if (isTauri() && !imgEl.src.includes('asset.localhost') && !imgEl.src.startsWith('asset://')) {
+                          try {
+                            imgEl.src = convertFileSrc(item.file_path);
+                            return;
+                          } catch {}
+                        }
                       }}
                     />
                     <div

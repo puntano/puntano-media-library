@@ -329,8 +329,11 @@ export const LightboxModal: React.FC = () => {
                 src={fullMediaUrl}
                 alt={activeItem.file_name}
                 onLoad={() => setIsFullResLoaded(true)}
-                onError={() => {
-                  // Fall back to thumbnail if local file read fails
+                onError={(e) => {
+                  const target = e.target as HTMLImageElement;
+                  if (!target.src.includes('puntano-thumb') && thumbnailUrl) {
+                    target.src = thumbnailUrl;
+                  }
                   setIsFullResLoaded(true);
                 }}
                 style={{
