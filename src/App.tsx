@@ -4,6 +4,7 @@ import { MapView } from './components/map/MapView';
 import { TimelineView } from './components/timeline/TimelineView';
 import { VirtualGallery } from './components/gallery/VirtualGallery';
 import { IndexingPanel } from './components/indexing/IndexingPanel';
+import { MetadataDrawer } from './components/inspector/MetadataDrawer';
 
 export const App: React.FC = () => {
   const { activeView, setActiveView, mediaTypeFilter, setMediaTypeFilter, totalMediaCount } = useLibraryStore();
@@ -166,6 +167,9 @@ export const App: React.FC = () => {
 
       {/* Indexing Modal */}
       {showIndexModal && <IndexingPanel onClose={() => setShowIndexModal(false)} />}
+
+      {/* Slide-Over Metadata Inspector */}
+      <MetadataDrawer />
     </div>
   );
 };

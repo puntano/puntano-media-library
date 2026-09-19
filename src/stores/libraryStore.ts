@@ -7,6 +7,7 @@ interface LibraryState {
   isIndexing: boolean;
   indexingProgress: IndexingProgressEvent | null;
   selectedItem: MediaItem | null;
+  isInspectorOpen: boolean;
   mediaTypeFilter: 'all' | 'photo' | 'video';
 
   setActiveView: (view: 'map' | 'timeline' | 'gallery') => void;
@@ -14,6 +15,7 @@ interface LibraryState {
   setIsIndexing: (isIndexing: boolean) => void;
   setIndexingProgress: (progress: IndexingProgressEvent | null) => void;
   setSelectedItem: (item: MediaItem | null) => void;
+  setInspectorOpen: (open: boolean) => void;
   setMediaTypeFilter: (filter: 'all' | 'photo' | 'video') => void;
 }
 
@@ -23,12 +25,14 @@ export const useLibraryStore = create<LibraryState>((set) => ({
   isIndexing: false,
   indexingProgress: null,
   selectedItem: null,
+  isInspectorOpen: false,
   mediaTypeFilter: 'all',
 
   setActiveView: (view) => set({ activeView: view }),
   setTotalMediaCount: (count) => set({ totalMediaCount: count }),
   setIsIndexing: (isIndexing) => set({ isIndexing }),
   setIndexingProgress: (indexingProgress) => set({ indexingProgress }),
-  setSelectedItem: (selectedItem) => set({ selectedItem }),
+  setSelectedItem: (selectedItem) => set({ selectedItem, isInspectorOpen: selectedItem !== null }),
+  setInspectorOpen: (isInspectorOpen) => set({ isInspectorOpen }),
   setMediaTypeFilter: (mediaTypeFilter) => set({ mediaTypeFilter }),
 }));

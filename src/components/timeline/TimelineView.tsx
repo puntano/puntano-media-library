@@ -1,10 +1,17 @@
 import React, { useEffect, useState } from 'react';
 import { tauriApi } from '../../services/tauriApi';
-import { TimelineGroup } from '../../types/media';
+import { MediaItem, TimelineGroup } from '../../types/media';
+import { useLibraryStore } from '../../stores/libraryStore';
+import { getThumbnailUrl } from '../../services/thumbnailProtocol';
 
 export const TimelineView: React.FC = () => {
   const [groups, setGroups] = useState<TimelineGroup[]>([]);
   const [selectedPeriod, setSelectedPeriod] = useState<string | null>(null);
+  const [items, setItems] = useState<MediaItem[]>([]);
+  const [selectedYearFilter, setSelectedYearFilter] = useState<string>('all');
+  const [isLoadingItems, setIsLoadingItems] = useState<boolean>(false);
+
+  const { setSelectedItem } = useLibraryStore();
 
   useEffect(() => {
     tauriApi.queryTimelineGroups().then((data) => {
@@ -15,7 +22,24 @@ export const TimelineView: React.FC = () => {
     });
   }, []);
 
+  // Fetch items for the active period
+  useEffect(() => {
+    if (!selectedPeriod) return;
+    setIsLoadingItems(true);
+    tauriApi.queryMediaPaged(60, 0).then((data) => {
+      setItems(data);
+      setIsLoadingItems(false);
+    });
+  }, [selectedPeriod]);
+
   const totalTimelineFiles = groups.reduce((acc, g) => acc + g.count, 0);
+
+  // Extract unique years for the filter bar
+  const years = Array.from(new Set(groups.map((g) => g.period.split('-')[0]))).sort().reverse();
+
+  const filteredGroups = selectedYearFilter === 'all'
+    ? groups
+    : groups.filter((g) => g.period.startsWith(selectedYearFilter));
 
   return (
     <div style={{ display: 'flex', width: '100%', height: '100%', overflow: 'hidden' }}>
@@ -28,23 +52,61 @@ export const TimelineView: React.FC = () => {
           display: 'flex',
           flexDirection: 'column',
           borderRight: '1px solid var(--surface-glass-border)',
+          zIndex: 10,
         }}
       >
         <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--surface-glass-border)' }}>
-          <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
             Chronological Archive
           </div>
-          <div style={{ fontSize: '1.25rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: 4 }}>
+          <div style={{ fontSize: '1.35rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: 4 }}>
             {totalTimelineFiles.toLocaleString()} Items
           </div>
           <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 2 }}>
             Indexed by DateTimeOriginal
           </div>
+
+          {/* Quick Year Filter Chips */}
+          <div style={{ display: 'flex', gap: 6, marginTop: 14, overflowX: 'auto', paddingBottom: 4 }}>
+            <button
+              onClick={() => setSelectedYearFilter('all')}
+              style={{
+                padding: '4px 10px',
+                borderRadius: 'var(--radius-sm)',
+                border: 'none',
+                cursor: 'pointer',
+                fontSize: '0.75rem',
+                fontWeight: 600,
+                backgroundColor: selectedYearFilter === 'all' ? 'var(--accent-primary)' : 'var(--bg-secondary)',
+                color: selectedYearFilter === 'all' ? '#ffffff' : 'var(--text-muted)',
+              }}
+            >
+              All
+            </button>
+            {years.map((year) => (
+              <button
+                key={year}
+                onClick={() => setSelectedYearFilter(year)}
+                style={{
+                  padding: '4px 10px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: 'none',
+                  cursor: 'pointer',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  backgroundColor: selectedYearFilter === year ? 'var(--accent-primary)' : 'var(--bg-secondary)',
+                  color: selectedYearFilter === year ? '#ffffff' : 'var(--text-muted)',
+                }}
+              >
+                {year}
+              </button>
+            ))}
+          </div>
         </div>
 
         {/* Chronological List of Months / Periods */}
         <div style={{ flex: 1, overflowY: 'auto', padding: '12px' }}>
-          {groups.map((group) => {
+          {filteredGroups.map((group) => {
             const isSelected = group.period === selectedPeriod;
             return (
               <div
@@ -93,38 +155,89 @@ export const TimelineView: React.FC = () => {
             {selectedPeriod ? `Media from ${selectedPeriod}` : 'Chronological Timeline'}
           </h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
-            Fast B-Tree range query executed directly against SQLite
+            Fast B-Tree range query executed directly against SQLite • Click any photo to inspect metadata
           </p>
         </div>
 
-        <div
-          style={{
-            display: 'grid',
-            gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
-            gap: 16,
-          }}
-        >
-          {Array.from({ length: 18 }).map((_, i) => (
-            <div
-              key={i}
-              className="glass-panel"
-              style={{
-                aspectRatio: '1',
-                borderRadius: 'var(--radius-md)',
-                overflow: 'hidden',
-                position: 'relative',
-                display: 'flex',
-                alignItems: 'center',
-                justifyContent: 'center',
-                background: 'linear-gradient(180deg, rgba(30, 41, 67, 0.4) 0%, rgba(16, 21, 34, 0.8) 100%)',
-              }}
-            >
-              <span style={{ fontSize: '0.8rem', color: 'var(--text-muted)' }}>
-                Thumbnail #{i + 1}
-              </span>
-            </div>
-          ))}
-        </div>
+        {isLoadingItems ? (
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+            Loading period records...
+          </div>
+        ) : (
+          <div
+            style={{
+              display: 'grid',
+              gridTemplateColumns: 'repeat(auto-fill, minmax(180px, 1fr))',
+              gap: 16,
+            }}
+          >
+            {items.map((item) => (
+              <div
+                key={item.id}
+                onClick={() => setSelectedItem(item)}
+                className="glass-panel"
+                style={{
+                  aspectRatio: '1',
+                  borderRadius: 'var(--radius-md)',
+                  overflow: 'hidden',
+                  position: 'relative',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  cursor: 'pointer',
+                  transition: 'transform 0.15s ease, box-shadow 0.15s ease',
+                }}
+                onMouseEnter={(e) => {
+                  e.currentTarget.style.transform = 'translateY(-2px)';
+                  e.currentTarget.style.boxShadow = 'var(--shadow-md)';
+                }}
+                onMouseLeave={(e) => {
+                  e.currentTarget.style.transform = 'translateY(0)';
+                  e.currentTarget.style.boxShadow = '';
+                }}
+              >
+                <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
+                  <img
+                    src={getThumbnailUrl(item.file_hash, item.media_type)}
+                    alt={item.file_name}
+                    loading="lazy"
+                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+                  />
+                  <div
+                    style={{
+                      position: 'absolute',
+                      top: 8,
+                      right: 8,
+                      padding: '2px 6px',
+                      borderRadius: 4,
+                      backgroundColor: 'rgba(0, 0, 0, 0.65)',
+                      fontSize: '0.65rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    {item.media_type === 'video' ? '🎬' : '📷'}
+                  </div>
+                </div>
+
+                <div style={{ padding: '8px 12px', borderTop: '1px solid var(--surface-glass-border)' }}>
+                  <div
+                    style={{
+                      fontSize: '0.8rem',
+                      fontWeight: 600,
+                      whiteSpace: 'nowrap',
+                      overflow: 'hidden',
+                      textOverflow: 'ellipsis',
+                    }}
+                  >
+                    {item.file_name}
+                  </div>
+                  <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                    {item.captured_at ? new Date(item.captured_at).toLocaleDateString() : 'Unknown date'}
+                  </div>
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
       </div>
     </div>
   );
