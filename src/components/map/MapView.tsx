@@ -2,7 +2,7 @@ import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Map, Marker, NavigationControl } from 'maplibre-gl';
 import 'maplibre-gl/dist/maplibre-gl.css';
 import Supercluster from 'supercluster';
-import { X, Maximize2, Info } from 'lucide-react';
+import { X, Maximize2, Info, ChevronDown, ChevronUp, MapPin, Film } from 'lucide-react';
 import { tauriApi } from '../../services/tauriApi';
 import { SpatialClusterPoint, MediaItem } from '../../types/media';
 import { useLibraryStore } from '../../stores/libraryStore';
@@ -18,6 +18,7 @@ export const MapView: React.FC = () => {
   const [selectedPoint, setSelectedPoint] = useState<SpatialClusterPoint | null>(null);
   const [clusterCount, setClusterCount] = useState<number>(0);
   const [activeZoom, setActiveZoom] = useState<number>(2);
+  const [isTrayExpanded, setIsTrayExpanded] = useState<boolean>(true);
 
   const {
     setSelectedItem,
@@ -295,8 +296,25 @@ export const MapView: React.FC = () => {
     }
   };
 
+  const handleOpenAreaLightbox = () => {
+    if (filteredPoints.length === 0) return;
+    const mediaItems = filteredPoints.map(toMediaItem);
+    openLightbox(mediaItems, 0);
+  };
+
+  const handleSelectPointFromTray = (p: SpatialClusterPoint) => {
+    setSelectedPoint(p);
+    if (map.current) {
+      map.current.flyTo({
+        center: [p.longitude, p.latitude],
+        zoom: Math.max(map.current.getZoom(), 14),
+        duration: 500,
+      });
+    }
+  };
+
   return (
-    <div style={{ position: 'relative', width: '100%', height: '100%' }}>
+    <div style={{ position: 'relative', width: '100%', height: '100%', overflow: 'hidden' }}>
       <div ref={mapContainer} style={{ width: '100%', height: '100%' }} />
 
       {/* Floating Spatial Statistics Overlay */}
@@ -331,17 +349,18 @@ export const MapView: React.FC = () => {
           className="glass-panel"
           style={{
             position: 'absolute',
-            bottom: 28,
+            bottom: isTrayExpanded ? 152 : 72,
             left: '50%',
             transform: 'translateX(-50%)',
             padding: 16,
             borderRadius: 'var(--radius-lg)',
-            zIndex: 30,
+            zIndex: 35,
             display: 'flex',
             alignItems: 'center',
             gap: 16,
             minWidth: 380,
             boxShadow: 'var(--shadow-lg)',
+            transition: 'bottom 0.2s ease',
           }}
         >
           <div
@@ -389,6 +408,157 @@ export const MapView: React.FC = () => {
           </div>
         </div>
       )}
+
+      {/* Floating Bottom Tray: Previews of Pictures Taken in Visible Area */}
+      <div
+        className="glass-panel"
+        style={{
+          position: 'absolute',
+          bottom: 16,
+          left: 16,
+          right: 16,
+          borderRadius: 'var(--radius-lg)',
+          padding: '10px 16px',
+          zIndex: 25,
+          boxShadow: 'var(--shadow-lg)',
+          backgroundColor: 'rgba(10, 15, 29, 0.88)',
+          backdropFilter: 'blur(20px)',
+          WebkitBackdropFilter: 'blur(20px)',
+          transition: 'all 0.2s ease',
+        }}
+      >
+        {/* Tray Header */}
+        <div
+          style={{
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'space-between',
+            paddingBottom: isTrayExpanded ? 8 : 0,
+            borderBottom: isTrayExpanded ? '1px solid var(--surface-glass-border)' : 'none',
+          }}
+        >
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            <MapPin size={15} color="var(--accent-primary)" />
+            <span style={{ fontWeight: 700, fontSize: '0.85rem', color: 'var(--text-primary)' }}>
+              Photos in this area
+            </span>
+            <span
+              style={{
+                fontSize: '0.72rem',
+                background: 'var(--surface-glass-hover)',
+                padding: '2px 8px',
+                borderRadius: 12,
+                color: 'var(--accent-primary)',
+                fontWeight: 600,
+              }}
+            >
+              {filteredPoints.length.toLocaleString()}
+            </span>
+          </div>
+
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+            {filteredPoints.length > 0 && (
+              <button
+                className="btn-secondary"
+                onClick={handleOpenAreaLightbox}
+                style={{ fontSize: '0.75rem', padding: '4px 10px', display: 'flex', alignItems: 'center', gap: 5 }}
+                title="View all photos in this area in fullscreen lightbox"
+              >
+                <Maximize2 size={12} />
+                View all in Lightbox
+              </button>
+            )}
+            <button
+              className="btn-secondary"
+              onClick={() => setIsTrayExpanded((prev) => !prev)}
+              style={{ padding: '4px 8px', fontSize: '0.75rem', display: 'flex', alignItems: 'center', gap: 4 }}
+              title={isTrayExpanded ? 'Collapse filmstrip' : 'Expand filmstrip'}
+            >
+              {isTrayExpanded ? <ChevronDown size={14} /> : <ChevronUp size={14} />}
+              {isTrayExpanded ? 'Hide' : 'Show'}
+            </button>
+          </div>
+        </div>
+
+        {/* Horizontal Filmstrip Carousel of Visible Photos */}
+        {isTrayExpanded && (
+          <div
+            style={{
+              display: 'flex',
+              gap: 10,
+              overflowX: 'auto',
+              paddingTop: 10,
+              paddingBottom: 4,
+              scrollbarWidth: 'thin',
+            }}
+          >
+            {filteredPoints.length === 0 ? (
+              <div style={{ padding: '10px 0', fontSize: '0.8rem', color: 'var(--text-muted)', width: '100%', textAlign: 'center' }}>
+                No geotagged media found in this visible map area • Pan or zoom out to discover photos
+              </div>
+            ) : (
+              filteredPoints.slice(0, 100).map((p) => {
+                const isSelected = selectedPoint?.id === p.id;
+                const fileName = p.file_path.split(/[/\\]/).pop() || '';
+                return (
+                  <div
+                    key={p.id}
+                    onClick={() => handleSelectPointFromTray(p)}
+                    onDoubleClick={() => {
+                      const item = toMediaItem(p);
+                      openLightbox([item], 0);
+                    }}
+                    title={`${fileName}\n${p.latitude.toFixed(4)}°, ${p.longitude.toFixed(4)}°\nClick to center map, double-click for lightbox`}
+                    style={{
+                      width: 86,
+                      height: 86,
+                      flexShrink: 0,
+                      borderRadius: 'var(--radius-sm)',
+                      overflow: 'hidden',
+                      position: 'relative',
+                      cursor: 'pointer',
+                      border: isSelected ? '2px solid var(--accent-primary)' : '1px solid var(--surface-glass-border)',
+                      boxShadow: isSelected ? 'var(--shadow-glow)' : 'none',
+                      transition: 'transform 0.15s ease, border-color 0.15s ease',
+                    }}
+                    onMouseEnter={(e) => {
+                      e.currentTarget.style.transform = 'scale(1.05)';
+                    }}
+                    onMouseLeave={(e) => {
+                      e.currentTarget.style.transform = 'scale(1)';
+                    }}
+                  >
+                    <MediaThumbnail
+                      filePath={p.file_path}
+                      fileHash={`hash_${p.id}`}
+                      mediaType={p.media_type}
+                      alt={fileName}
+                    />
+
+                    {p.media_type === 'video' && (
+                      <div
+                        style={{
+                          position: 'absolute',
+                          top: 4,
+                          right: 4,
+                          padding: '2px 4px',
+                          borderRadius: 3,
+                          backgroundColor: 'rgba(0,0,0,0.7)',
+                          display: 'flex',
+                          alignItems: 'center',
+                          justifyContent: 'center',
+                        }}
+                      >
+                        <Film size={10} color="#ffffff" />
+                      </div>
+                    )}
+                  </div>
+                );
+              })
+            )}
+          </div>
+        )}
+      </div>
     </div>
   );
 };

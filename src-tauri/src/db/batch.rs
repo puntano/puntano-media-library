@@ -199,8 +199,8 @@ impl MediaRepository {
                 strftime('%Y-%m', datetime(COALESCE(captured_at, file_modified_at) / 1000, 'unixepoch')) as period,
                 count(*) as item_count,
                 max(id) as cover_id,
-                (SELECT file_path FROM media_files WHERE id = max(m.id)) as cover_path
-            FROM media_files m
+                file_path as cover_file_path
+            FROM media_files
             WHERE COALESCE(captured_at, file_modified_at) IS NOT NULL
             GROUP BY period
             ORDER BY period DESC;

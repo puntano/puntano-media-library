@@ -23,19 +23,24 @@ export const TimelineView: React.FC = () => {
   } = useLibraryStore();
 
   useEffect(() => {
-    tauriApi.queryTimelineGroups().then((data) => {
-      setGroups(data);
-      if (data.length > 0) {
-        setSelectedPeriod((prev) => {
-          if (prev && data.some((d) => d.period === prev)) {
-            return prev;
-          }
-          return data[0].period;
-        });
-      } else {
-        setSelectedPeriod(null);
-      }
-    });
+    tauriApi
+      .queryTimelineGroups()
+      .then((data) => {
+        setGroups(data);
+        if (data.length > 0) {
+          setSelectedPeriod((prev) => {
+            if (prev && data.some((d) => d.period === prev)) {
+              return prev;
+            }
+            return data[0].period;
+          });
+        } else {
+          setSelectedPeriod(null);
+        }
+      })
+      .catch((err) => {
+        console.error('Failed to load timeline groups:', err);
+      });
   }, [totalMediaCount, isIndexing]);
 
   // Fetch items for the active period + active filters
@@ -205,9 +210,24 @@ export const TimelineView: React.FC = () => {
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
             Loading period records...
           </div>
+        ) : groups.length === 0 ? (
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+            <Calendar size={36} style={{ margin: '0 auto 12px auto', opacity: 0.4 }} />
+            <div style={{ fontWeight: 600, fontSize: '1.1rem', color: 'var(--text-primary)' }}>
+              No timeline groups available
+            </div>
+            <div style={{ fontSize: '0.875rem', marginTop: 4 }}>
+              Index a local folder to organize your photos and videos by capture and creation dates.
+            </div>
+          </div>
         ) : items.length === 0 ? (
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
-            No media found in {selectedPeriod} matching current filters.
+            <div style={{ fontWeight: 600, fontSize: '1rem', color: 'var(--text-primary)' }}>
+              No media found in {selectedPeriod || 'selected period'} matching active filters.
+            </div>
+            <div style={{ fontSize: '0.85rem', marginTop: 4 }}>
+              Try adjusting your search query, media type, or GPS filter.
+            </div>
           </div>
         ) : (
           <div
@@ -280,7 +300,11 @@ export const TimelineView: React.FC = () => {
                     {item.file_name}
                   </div>
                   <div style={{ fontSize: '0.7rem', color: 'var(--text-muted)', marginTop: 2 }}>
-                    {item.captured_at ? new Date(item.captured_at).toLocaleDateString() : 'Unknown date'}
+                    {item.captured_at
+                      ? new Date(item.captured_at).toLocaleDateString()
+                      : item.file_modified_at
+                      ? new Date(item.file_modified_at).toLocaleDateString()
+                      : 'Unknown date'}
                   </div>
                 </div>
               </div>
