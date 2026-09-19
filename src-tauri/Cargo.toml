@@ -1,6 +1,6 @@
 [package]
 name = "puntano-media-library"
-version = "0.1.0"
+version = "0.1.1"
 description = "High-Performance Cross-Platform Media Library"
 authors = ["Puntano Team"]
 edition = "2021"

@@ -109,12 +109,21 @@ impl MediaRepository {
         Ok(exists)
     }
 
-    /// High-performance spatial query: retrieves media within a map bounding box using the R*Tree index.
+    /// High-performance spatial query: retrieves media within a map bounding box using the R*Tree index with table fallback.
     pub fn query_by_bounding_box(
         conn: &Connection,
         bbox: &SpatialBoundingBox,
         limit: u32,
     ) -> Result<Vec<SpatialClusterPoint>> {
+        let min_lat = bbox.min_lat.min(bbox.max_lat).max(-90.0);
+        let max_lat = bbox.min_lat.max(bbox.max_lat).min(90.0);
+        let spans_world = (bbox.max_lon - bbox.min_lon).abs() >= 360.0;
+        let (min_lon, max_lon) = if spans_world {
+            (-180.0, 180.0)
+        } else {
+            (bbox.min_lon.min(bbox.max_lon).max(-180.0), bbox.min_lon.max(bbox.max_lon).min(180.0))
+        };
+
         let mut stmt = conn.prepare_cached(
             r#"
             SELECT m.id, m.latitude, m.longitude, m.file_path, m.captured_at, m.thumbnail_path, m.media_type
@@ -127,7 +136,7 @@ impl MediaRepository {
         )?;
 
         let rows = stmt.query_map(
-            params![bbox.min_lat, bbox.max_lat, bbox.min_lon, bbox.max_lon, limit],
+            params![min_lat, max_lat, min_lon, max_lon, limit],
             |row| {
                 Ok(SpatialClusterPoint {
                     id: row.get(0)?,
@@ -145,20 +154,54 @@ impl MediaRepository {
         for point in rows {
             points.push(point?);
         }
+
+        // Fallback directly to media_files table if R*Tree table returned 0 items
+        if points.is_empty() {
+            let mut fallback_stmt = conn.prepare_cached(
+                r#"
+                SELECT id, latitude, longitude, file_path, captured_at, thumbnail_path, media_type
+                FROM media_files
+                WHERE latitude IS NOT NULL AND longitude IS NOT NULL
+                  AND latitude >= ?1 AND latitude <= ?2
+                  AND longitude >= ?3 AND longitude <= ?4
+                LIMIT ?5;
+                "#,
+            )?;
+
+            let fallback_rows = fallback_stmt.query_map(
+                params![min_lat, max_lat, min_lon, max_lon, limit],
+                |row| {
+                    Ok(SpatialClusterPoint {
+                        id: row.get(0)?,
+                        latitude: row.get(1)?,
+                        longitude: row.get(2)?,
+                        file_path: row.get(3)?,
+                        captured_at: row.get(4)?,
+                        thumbnail_path: row.get(5)?,
+                        media_type: row.get(6)?,
+                    })
+                },
+            )?;
+
+            for point in fallback_rows {
+                points.push(point?);
+            }
+        }
+
         Ok(points)
     }
 
-    /// Chronological timeline query: returns grouped counts by Year-Month or Date
+    /// Chronological timeline query: returns grouped counts by Year-Month using captured_at with file_modified_at fallback
     pub fn query_timeline_groups(conn: &Connection) -> Result<Vec<TimelineGroup>> {
         let mut stmt = conn.prepare_cached(
             r#"
             SELECT 
-                strftime('%Y-%m', datetime(captured_at / 1000, 'unixepoch')) as period,
+                strftime('%Y-%m', datetime(COALESCE(captured_at, file_modified_at) / 1000, 'unixepoch')) as period,
                 count(*) as item_count,
                 max(id) as cover_id,
                 (SELECT file_path FROM media_files WHERE id = max(m.id)) as cover_path
             FROM media_files m
-            WHERE captured_at IS NOT NULL
+            WHERE COALESCE(captured_at, file_modified_at) IS NOT NULL
             GROUP BY period
             ORDER BY period DESC;
             "#,
@@ -345,12 +388,12 @@ impl MediaRepository {
         }
 
         if let Some(from_date) = filter.date_from {
-            sql.push_str(" AND captured_at >= ?");
+            sql.push_str(" AND COALESCE(captured_at, file_modified_at) >= ?");
             params.push(Box::new(from_date));
         }
 
         if let Some(to_date) = filter.date_to {
-            sql.push_str(" AND captured_at <= ?");
+            sql.push_str(" AND COALESCE(captured_at, file_modified_at) <= ?");
             params.push(Box::new(to_date));
         }
 

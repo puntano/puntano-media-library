@@ -1,11 +1,12 @@
 import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Map, Marker, NavigationControl } from 'maplibre-gl';
+import 'maplibre-gl/dist/maplibre-gl.css';
 import Supercluster from 'supercluster';
 import { X, Maximize2, Info } from 'lucide-react';
 import { tauriApi } from '../../services/tauriApi';
 import { SpatialClusterPoint, MediaItem } from '../../types/media';
 import { useLibraryStore } from '../../stores/libraryStore';
-import { getThumbnailUrl } from '../../services/thumbnailProtocol';
+import { MediaThumbnail } from '../common/MediaThumbnail';
 
 export const MapView: React.FC = () => {
   const mapContainer = useRef<HTMLDivElement>(null);
@@ -25,6 +26,8 @@ export const MapView: React.FC = () => {
     searchQuery,
     dateFrom,
     dateTo,
+    isIndexing,
+    totalMediaCount,
   } = useLibraryStore();
 
   // 1. Initialize MapLibre
@@ -38,7 +41,11 @@ export const MapView: React.FC = () => {
         sources: {
           'osm-tiles': {
             type: 'raster',
-            tiles: ['https://tile.openstreetmap.org/{z}/{x}/{y}.png'],
+            tiles: [
+              'https://a.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://b.tile.openstreetmap.org/{z}/{x}/{y}.png',
+              'https://c.tile.openstreetmap.org/{z}/{x}/{y}.png',
+            ],
             tileSize: 256,
             attribution: '&copy; OpenStreetMap contributors',
           },
@@ -58,6 +65,11 @@ export const MapView: React.FC = () => {
     });
 
     map.current.addControl(new NavigationControl({ visualizePitch: true }), 'top-right');
+
+    const handleResize = () => {
+      map.current?.resize();
+    };
+    window.addEventListener('resize', handleResize);
 
     // Debounced Viewport Bounding-Box Listener
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
@@ -94,12 +106,32 @@ export const MapView: React.FC = () => {
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
+      window.removeEventListener('resize', handleResize);
       activeMarkers.current.forEach((m) => m.remove());
       activeMarkers.current = [];
       map.current?.remove();
       map.current = null;
     };
   }, []);
+
+  // Re-query spatial points when library finishes indexing or media count updates
+  useEffect(() => {
+    if (!map.current) return;
+    map.current.resize();
+    const bounds = map.current.getBounds();
+    tauriApi
+      .querySpatialBoundingBox(
+        bounds.getSouth(),
+        bounds.getNorth(),
+        bounds.getWest(),
+        bounds.getEast(),
+        20000
+      )
+      .then((data) => {
+        setPoints(data);
+      })
+      .catch((err) => console.error('Spatial refresh error:', err));
+  }, [isIndexing, totalMediaCount]);
 
   // Filter points according to active global filters
   const filteredPoints = useMemo(() => {
@@ -325,10 +357,11 @@ export const MapView: React.FC = () => {
             onClick={handleOpenLightbox}
             title="Click to view fullscreen"
           >
-            <img
-              src={getThumbnailUrl(`hash_${selectedPoint.id}`, selectedPoint.media_type)}
-              alt="Preview"
-              style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+            <MediaThumbnail
+              filePath={selectedPoint.file_path}
+              fileHash={`hash_${selectedPoint.id}`}
+              mediaType={selectedPoint.media_type}
+              alt={selectedPoint.file_path.split(/[/\\]/).pop() || 'Preview'}
             />
           </div>
 

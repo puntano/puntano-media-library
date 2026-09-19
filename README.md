@@ -28,18 +28,19 @@ Pre-compiled production binaries for Windows (x64) are generated in the release 
 
 | Package Type | File | Description |
 | :--- | :--- | :--- |
-| **Setup Wizard (Recommended)** | `Puntano Media Library_0.1.0_x64-setup.exe` | Standard Windows NSIS installer with desktop shortcut and Start menu entry (~4.3 MB). |
-| **Enterprise Installer** | `Puntano Media Library_0.1.0_x64_en-US.msi` | Windows Installer package suitable for unattended or enterprise deployments (~6.0 MB). |
+| **Setup Wizard (Recommended)** | `Puntano Media Library_0.1.1_x64-setup.exe` | Windows NSIS installer with desktop shortcut, Start menu entry, and seamless in-place updates (~4.3 MB). |
+| **Enterprise Installer** | `Puntano Media Library_0.1.1_x64_en-US.msi` | Windows Installer package suitable for unattended or enterprise deployments (~6.0 MB). |
 | **Portable Executable** | `puntano-media-library.exe` | Standalone binary with embedded UI assets. Requires no installation—run directly from any folder or USB drive (~18.7 MB). |
 
-### How to Install on Windows
+### How to Install & Update on Windows
 1. Download the setup file (`.exe` or `.msi`).
 2. Double-click the installer and follow the prompt instructions.
-3. **Note on Windows SmartScreen:** Because this local build is self-signed, Windows SmartScreen may show a *"Windows protected your PC"* prompt on first launch. Click **"More info"** and then **"Run anyway"**.
+3. **In-Place Updates**: If a previous version of Puntano Media Library is already installed, running the setup `.exe` updates the app automatically in-place without requiring you to uninstall first.
+4. **Note on Windows SmartScreen:** Because this local build is self-signed, Windows SmartScreen may show a *"Windows protected your PC"* prompt on first launch. Click **"More info"** and then **"Run anyway"**.
 
 ### How to Share with Others
-- **Option A (GitHub Releases):** Create a new release in your GitHub repository and upload the generated `.exe` and `.msi` files from `src-tauri/target/release/bundle/`.
-- **Option B (Direct Sharing):** Send the `Puntano Media Library_0.1.0_x64-setup.exe` file directly via Google Drive, OneDrive, or USB stick. Recipients do not need Node.js, Rust, or C++ installed.
+- **Option A (GitHub Releases):** Create a new release in your GitHub repository and upload the generated `.exe` and `.msi` files from `dist-installers/` or `src-tauri/target/release/bundle/`.
+- **Option B (Direct Sharing):** Send the `Puntano Media Library_0.1.1_x64-setup.exe` file directly via Google Drive, OneDrive, or USB stick. Recipients do not need Node.js, Rust, or C++ installed.
 
 ---
 

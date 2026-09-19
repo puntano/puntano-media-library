@@ -1,10 +1,9 @@
 import React, { useEffect, useState } from 'react';
 import { Film, Image as ImageIcon, Calendar } from 'lucide-react';
-import { convertFileSrc } from '@tauri-apps/api/core';
-import { tauriApi, isTauri } from '../../services/tauriApi';
+import { tauriApi } from '../../services/tauriApi';
 import { MediaItem, TimelineGroup, MediaFilterQuery } from '../../types/media';
 import { useLibraryStore } from '../../stores/libraryStore';
-import { getThumbnailUrl } from '../../services/thumbnailProtocol';
+import { MediaThumbnail } from '../common/MediaThumbnail';
 
 export const TimelineView: React.FC = () => {
   const [groups, setGroups] = useState<TimelineGroup[]>([]);
@@ -19,16 +18,25 @@ export const TimelineView: React.FC = () => {
     mediaTypeFilter,
     searchQuery,
     hasGpsOnly,
+    totalMediaCount,
+    isIndexing,
   } = useLibraryStore();
 
   useEffect(() => {
     tauriApi.queryTimelineGroups().then((data) => {
       setGroups(data);
       if (data.length > 0) {
-        setSelectedPeriod(data[0].period);
+        setSelectedPeriod((prev) => {
+          if (prev && data.some((d) => d.period === prev)) {
+            return prev;
+          }
+          return data[0].period;
+        });
+      } else {
+        setSelectedPeriod(null);
       }
     });
-  }, []);
+  }, [totalMediaCount, isIndexing]);
 
   // Fetch items for the active period + active filters
   useEffect(() => {
@@ -236,20 +244,11 @@ export const TimelineView: React.FC = () => {
                 }}
               >
                 <div style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>
-                  <img
-                    src={getThumbnailUrl(item.file_hash, item.media_type)}
+                  <MediaThumbnail
+                    filePath={item.file_path}
+                    fileHash={item.file_hash}
+                    mediaType={item.media_type}
                     alt={item.file_name}
-                    loading="lazy"
-                    onError={(e) => {
-                      const imgEl = e.target as HTMLImageElement;
-                      if (isTauri() && !imgEl.src.includes('asset.localhost') && !imgEl.src.startsWith('asset://')) {
-                        try {
-                          imgEl.src = convertFileSrc(item.file_path);
-                          return;
-                        } catch {}
-                      }
-                    }}
-                    style={{ width: '100%', height: '100%', objectFit: 'cover' }}
                   />
                   <div
                     style={{

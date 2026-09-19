@@ -9,9 +9,10 @@ import {
   ExternalLink,
   Info,
 } from 'lucide-react';
+import { convertFileSrc } from '@tauri-apps/api/core';
 import { useLibraryStore } from '../../stores/libraryStore';
-import { getThumbnailUrl } from '../../services/thumbnailProtocol';
 import { tauriApi } from '../../services/tauriApi';
+import { MediaThumbnail } from '../common/MediaThumbnail';
 
 export const MetadataDrawer: React.FC = () => {
   const { selectedItem, isInspectorOpen, setInspectorOpen, setSelectedItem, setActiveView } = useLibraryStore();
@@ -99,11 +100,22 @@ export const MetadataDrawer: React.FC = () => {
               marginBottom: 24,
             }}
           >
-            <img
-              src={getThumbnailUrl(selectedItem.file_hash, selectedItem.media_type)}
-              alt={selectedItem.file_name}
-              style={{ width: '100%', height: '100%', objectFit: 'contain' }}
-            />
+            {selectedItem.media_type === 'video' ? (
+              <video
+                src={`${convertFileSrc(selectedItem.file_path)}#t=0.5`}
+                controls
+                preload="metadata"
+                style={{ width: '100%', height: '100%', objectFit: 'contain' }}
+              />
+            ) : (
+              <MediaThumbnail
+                filePath={selectedItem.file_path}
+                fileHash={selectedItem.file_hash}
+                mediaType={selectedItem.media_type}
+                alt={selectedItem.file_name}
+                style={{ objectFit: 'contain' }}
+              />
+            )}
             <div
               style={{
                 position: 'absolute',

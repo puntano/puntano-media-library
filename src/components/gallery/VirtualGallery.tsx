@@ -1,11 +1,10 @@
 import React, { useEffect, useRef, useState, useCallback } from 'react';
 import { useVirtualizer } from '@tanstack/react-virtual';
 import { Search, Image as ImageIcon, Film, RotateCcw } from 'lucide-react';
-import { convertFileSrc } from '@tauri-apps/api/core';
-import { tauriApi, isTauri } from '../../services/tauriApi';
+import { tauriApi } from '../../services/tauriApi';
 import { MediaItem, MediaFilterQuery } from '../../types/media';
-import { getThumbnailUrl } from '../../services/thumbnailProtocol';
 import { useLibraryStore } from '../../stores/libraryStore';
+import { MediaThumbnail } from '../common/MediaThumbnail';
 
 const PAGE_SIZE = 100;
 const COLUMNS = 5;
@@ -227,25 +226,12 @@ export const VirtualGallery: React.FC = () => {
                       height: 140,
                     }}
                   >
-                    <img
-                      src={getThumbnailUrl(item.file_hash, item.media_type)}
+                    <MediaThumbnail
+                      filePath={item.file_path}
+                      fileHash={item.file_hash}
+                      mediaType={item.media_type}
                       alt={item.file_name}
-                      loading="lazy"
-                      style={{
-                        width: '100%',
-                        height: '100%',
-                        objectFit: 'cover',
-                        transition: 'opacity 0.2s ease',
-                      }}
-                      onError={(e) => {
-                        const imgEl = e.target as HTMLImageElement;
-                        if (isTauri() && !imgEl.src.includes('asset.localhost') && !imgEl.src.startsWith('asset://')) {
-                          try {
-                            imgEl.src = convertFileSrc(item.file_path);
-                            return;
-                          } catch {}
-                        }
-                      }}
+                      style={{ transition: 'opacity 0.2s ease' }}
                     />
                     <div
                       style={{
