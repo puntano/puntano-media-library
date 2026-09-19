@@ -1,6 +1,17 @@
 import React, { useEffect } from 'react';
+import {
+  X,
+  FolderOpen,
+  Calendar,
+  Camera,
+  MapPin,
+  HardDrive,
+  ExternalLink,
+  Info,
+} from 'lucide-react';
 import { useLibraryStore } from '../../stores/libraryStore';
 import { getThumbnailUrl } from '../../services/thumbnailProtocol';
+import { tauriApi } from '../../services/tauriApi';
 
 export const MetadataDrawer: React.FC = () => {
   const { selectedItem, isInspectorOpen, setInspectorOpen, setSelectedItem, setActiveView } = useLibraryStore();
@@ -26,6 +37,12 @@ export const MetadataDrawer: React.FC = () => {
     setActiveView('map');
   };
 
+  const handleRevealInExplorer = () => {
+    if (selectedItem?.file_path) {
+      tauriApi.showInFolder(selectedItem.file_path);
+    }
+  };
+
   return (
     <>
       <div className="metadata-drawer-backdrop" onClick={handleClose} />
@@ -42,7 +59,8 @@ export const MetadataDrawer: React.FC = () => {
             borderBottom: '1px solid var(--surface-glass-border)',
           }}
         >
-          <div style={{ fontWeight: 700, fontSize: '1.05rem', letterSpacing: '-0.01em' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: '1.05rem', letterSpacing: '-0.01em' }}>
+            <Info size={18} color="var(--accent-primary)" />
             Media Inspector
           </div>
           <button
@@ -51,13 +69,15 @@ export const MetadataDrawer: React.FC = () => {
               background: 'transparent',
               border: 'none',
               color: 'var(--text-secondary)',
-              fontSize: '1.25rem',
               cursor: 'pointer',
-              padding: '4px 8px',
+              padding: '6px',
               borderRadius: 'var(--radius-sm)',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
             }}
           >
-            ✕
+            <X size={18} />
           </button>
         </div>
 
@@ -103,7 +123,8 @@ export const MetadataDrawer: React.FC = () => {
 
           {/* File Overview */}
           <div style={{ marginBottom: 24 }}>
-            <h4 style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+            <h4 style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+              <HardDrive size={13} />
               File Information
             </h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: '0.85rem' }}>
@@ -127,12 +148,30 @@ export const MetadataDrawer: React.FC = () => {
                   {selectedItem.file_path}
                 </span>
               </div>
+
+              {/* Reveal in Explorer Button */}
+              <button
+                className="btn-secondary"
+                onClick={handleRevealInExplorer}
+                style={{
+                  fontSize: '0.75rem',
+                  padding: '6px 12px',
+                  gap: 6,
+                  width: '100%',
+                  justifyContent: 'center',
+                  marginTop: 6,
+                }}
+              >
+                <FolderOpen size={14} />
+                Show in File Explorer
+              </button>
             </div>
           </div>
 
           {/* Chronological Metadata */}
           <div style={{ marginBottom: 24 }}>
-            <h4 style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+            <h4 style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+              <Calendar size={13} />
               Capture Time
             </h4>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: '0.85rem' }}>
@@ -158,7 +197,8 @@ export const MetadataDrawer: React.FC = () => {
           {/* Camera & Lens EXIF */}
           {(selectedItem.camera_make || selectedItem.camera_model || selectedItem.iso) && (
             <div style={{ marginBottom: 24 }}>
-              <h4 style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+              <h4 style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em', marginBottom: 12 }}>
+                <Camera size={13} />
                 Camera & Lens
               </h4>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: '0.85rem' }}>
@@ -207,7 +247,8 @@ export const MetadataDrawer: React.FC = () => {
           {selectedItem.latitude && selectedItem.longitude && (
             <div style={{ marginBottom: 24 }}>
               <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: 12 }}>
-                <h4 style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                <h4 style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+                  <MapPin size={13} />
                   GPS Coordinates
                 </h4>
                 <button
@@ -219,9 +260,13 @@ export const MetadataDrawer: React.FC = () => {
                     fontSize: '0.75rem',
                     fontWeight: 600,
                     cursor: 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 4,
                   }}
                 >
-                  View on Map ↗
+                  <ExternalLink size={12} />
+                  View on Map
                 </button>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: '0.85rem' }}>

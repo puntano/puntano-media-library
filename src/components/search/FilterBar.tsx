@@ -1,4 +1,5 @@
 import React, { useEffect, useState } from 'react';
+import { Search, MapPin, X, RotateCcw, Calendar } from 'lucide-react';
 import { useLibraryStore } from '../../stores/libraryStore';
 
 export const FilterBar: React.FC = () => {
@@ -58,8 +59,8 @@ export const FilterBar: React.FC = () => {
       }}
     >
       {/* Search Input */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, maxWidth: 420 }}>
-        <span style={{ fontSize: '0.9rem', color: 'var(--text-muted)' }}>🔍</span>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, maxWidth: 420, position: 'relative' }}>
+        <Search size={15} color="var(--text-muted)" style={{ position: 'absolute', left: 12 }} />
         <input
           type="text"
           value={localSearch}
@@ -67,7 +68,7 @@ export const FilterBar: React.FC = () => {
           placeholder="Search filenames, folders, camera models..."
           style={{
             width: '100%',
-            padding: '6px 12px',
+            padding: '7px 32px 7px 36px',
             backgroundColor: 'var(--bg-secondary)',
             border: '1px solid var(--surface-glass-border)',
             borderRadius: 'var(--radius-sm)',
@@ -83,14 +84,19 @@ export const FilterBar: React.FC = () => {
               setSearchQuery('');
             }}
             style={{
+              position: 'absolute',
+              right: 8,
               background: 'transparent',
               border: 'none',
               color: 'var(--text-muted)',
               cursor: 'pointer',
-              fontSize: '0.8rem',
+              display: 'flex',
+              alignItems: 'center',
+              justifyContent: 'center',
+              padding: 2,
             }}
           >
-            ✕
+            <X size={14} />
           </button>
         )}
       </div>
@@ -98,7 +104,8 @@ export const FilterBar: React.FC = () => {
       {/* Date & Filter Badges */}
       <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         {/* Date presets */}
-        <div style={{ display: 'flex', gap: 4 }}>
+        <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
+          <Calendar size={14} color="var(--text-muted)" style={{ marginRight: 2 }} />
           <button
             onClick={() => handleDatePreset('all')}
             style={{
@@ -135,7 +142,7 @@ export const FilterBar: React.FC = () => {
         <button
           onClick={() => setHasGpsOnly(!hasGpsOnly)}
           style={{
-            padding: '4px 10px',
+            padding: '5px 10px',
             borderRadius: 'var(--radius-sm)',
             border: hasGpsOnly ? '1px solid var(--accent-primary)' : '1px solid var(--surface-glass-border)',
             cursor: 'pointer',
@@ -145,11 +152,12 @@ export const FilterBar: React.FC = () => {
             color: hasGpsOnly ? '#ffffff' : 'var(--text-secondary)',
             display: 'flex',
             alignItems: 'center',
-            gap: 4,
+            gap: 5,
             transition: 'all 0.15s ease',
           }}
         >
-          <span>📍</span> Geotagged Only
+          <MapPin size={13} />
+          Geotagged Only
         </button>
 
         {/* Clear Filters */}
@@ -160,17 +168,21 @@ export const FilterBar: React.FC = () => {
               clearFilters();
             }}
             style={{
-              padding: '4px 8px',
+              padding: '5px 10px',
               borderRadius: 'var(--radius-sm)',
               border: 'none',
               cursor: 'pointer',
               fontSize: '0.72rem',
               fontWeight: 600,
               color: 'var(--status-danger)',
-              background: 'rgba(239, 68, 68, 0.1)',
+              background: 'rgba(239, 68, 68, 0.12)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 4,
             }}
           >
-            Reset Filters
+            <RotateCcw size={12} />
+            Reset
           </button>
         )}
       </div>

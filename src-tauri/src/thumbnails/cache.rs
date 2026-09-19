@@ -51,3 +51,26 @@ impl ThumbnailCache {
         &self.base_dir
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_path_and_buckets() {
+        let temp_dir = std::env::temp_dir().join("puntano_test_cache_unit");
+        let cache = ThumbnailCache::new(&temp_dir);
+
+        let path = cache.resolve_path("a1b2c3d4e5f6");
+        assert!(path.to_string_lossy().contains("a1"));
+        assert!(path.to_string_lossy().ends_with("a1b2c3d4e5f6.webp"));
+
+        let rel = cache.get_relative_path("a1b2c3d4e5f6");
+        assert_eq!(rel, "thumbnails/a1/a1b2c3d4e5f6.webp");
+
+        let short_rel = cache.get_relative_path("a");
+        assert_eq!(short_rel, "thumbnails/00/a.webp");
+
+        let _ = fs::remove_dir_all(&temp_dir);
+    }
+}

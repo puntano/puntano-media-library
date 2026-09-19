@@ -296,3 +296,28 @@ impl IndexingPipeline {
         geohash
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_geohash_encoding() {
+        // San Francisco (37.7749, -122.4194)
+        let sf_hash = IndexingPipeline::encode_geohash(37.7749, -122.4194, 5);
+        assert_eq!(&sf_hash[..3], "9q8");
+
+        // London (51.5074, -0.1278)
+        let london_hash = IndexingPipeline::encode_geohash(51.5074, -0.1278, 5);
+        assert_eq!(&london_hash[..3], "gcp");
+    }
+
+    #[test]
+    fn test_fast_hash_length() {
+        let temp_file = std::env::temp_dir().join("test_hash_sample.bin");
+        std::fs::write(&temp_file, b"sample binary content for xxhash verification").unwrap();
+        let hash = IndexingPipeline::compute_fast_hash(&temp_file, 45);
+        assert_eq!(hash.len(), 16);
+        let _ = std::fs::remove_file(temp_file);
+    }
+}

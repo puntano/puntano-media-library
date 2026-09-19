@@ -87,15 +87,27 @@ impl VideoKeyframeExtractor {
         _duration: Option<f64>,
     ) -> Result<(), String> {
         use std::fs::File;
-        use std::io::Write;
+        use std::io::BufWriter;
+        use image::{ColorType, ImageBuffer, Rgba};
 
-        // Create a minimal 384x216 WebP or SVG-based fallback
-        let mut file = File::create(dst_path.as_ref())
+        let width = 384u32;
+        let height = 216u32;
+        // Elegant slate color with a subtle center accent
+        let img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_pixel(width, height, Rgba([30, 41, 59, 255]));
+
+        let out_file = File::create(dst_path.as_ref())
             .map_err(|e| format!("Failed to create fallback poster: {}", e))?;
+        let mut writer = BufWriter::new(out_file);
 
-        // Fallback placeholder bytes
-        file.write_all(b"RIFF\x20\0\0\0WEBPVP8 \x14\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0\0")
-            .map_err(|e| format!("Write failed: {}", e))?;
+        let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut writer);
+        image::ImageEncoder::write_image(
+            encoder,
+            img.as_raw(),
+            width,
+            height,
+            ColorType::Rgba8.into(),
+        )
+        .map_err(|e| format!("Failed to encode fallback WebP: {}", e))?;
 
         Ok(())
     }

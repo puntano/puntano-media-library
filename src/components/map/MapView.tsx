@@ -1,8 +1,8 @@
-import React, { useEffect, useRef, useState } from 'react';
+import React, { useEffect, useRef, useState, useMemo } from 'react';
 import { Map, Marker, NavigationControl } from 'maplibre-gl';
 import Supercluster from 'supercluster';
 import { tauriApi } from '../../services/tauriApi';
-import { SpatialClusterPoint } from '../../types/media';
+import { SpatialClusterPoint, MediaItem } from '../../types/media';
 import { useLibraryStore } from '../../stores/libraryStore';
 import { getThumbnailUrl } from '../../services/thumbnailProtocol';
 
@@ -17,7 +17,14 @@ export const MapView: React.FC = () => {
   const [clusterCount, setClusterCount] = useState<number>(0);
   const [activeZoom, setActiveZoom] = useState<number>(2);
 
-  const { setSelectedItem } = useLibraryStore();
+  const {
+    setSelectedItem,
+    openLightbox,
+    mediaTypeFilter,
+    searchQuery,
+    dateFrom,
+    dateTo,
+  } = useLibraryStore();
 
   // 1. Initialize MapLibre
   useEffect(() => {
@@ -93,14 +100,29 @@ export const MapView: React.FC = () => {
     };
   }, []);
 
-  // 2. Load points into Supercluster
+  // Filter points according to active global filters
+  const filteredPoints = useMemo(() => {
+    return points.filter((p) => {
+      if (mediaTypeFilter !== 'all' && p.media_type !== mediaTypeFilter) return false;
+      if (dateFrom && p.captured_at && p.captured_at < dateFrom) return false;
+      if (dateTo && p.captured_at && p.captured_at > dateTo) return false;
+      if (searchQuery.trim()) {
+        const q = searchQuery.toLowerCase();
+        if (!p.file_path.toLowerCase().includes(q)) return false;
+      }
+      return true;
+    });
+  }, [points, mediaTypeFilter, dateFrom, dateTo, searchQuery]);
+
+  // 2. Load filtered points into Supercluster
   useEffect(() => {
-    if (points.length === 0) {
+    if (filteredPoints.length === 0) {
       clearMarkers();
+      setClusterCount(0);
       return;
     }
 
-    const geojsonFeatures = points.map((p) => ({
+    const geojsonFeatures = filteredPoints.map((p) => ({
       type: 'Feature' as const,
       properties: {
         id: p.id,
@@ -122,7 +144,7 @@ export const MapView: React.FC = () => {
     sc.load(geojsonFeatures);
     clusterIndex.current = sc;
     renderClusterMarkers();
-  }, [points]);
+  }, [filteredPoints]);
 
   const clearMarkers = () => {
     activeMarkers.current.forEach((m) => m.remove());
@@ -190,28 +212,38 @@ export const MapView: React.FC = () => {
     }
   };
 
-  const handleInspectMedia = () => {
-    if (!selectedPoint) return;
-    setSelectedItem({
-      id: selectedPoint.id,
+  const toMediaItem = (point: SpatialClusterPoint): MediaItem => {
+    const lastSlash = Math.max(point.file_path.lastIndexOf('/'), point.file_path.lastIndexOf('\\'));
+    return {
+      id: point.id,
       library_id: 1,
-      file_path: selectedPoint.file_path,
-      directory: selectedPoint.file_path.substring(0, selectedPoint.file_path.lastIndexOf('/') || selectedPoint.file_path.lastIndexOf('\\')),
-      file_name: selectedPoint.file_path.split(/[/\\]/).pop() || '',
+      file_path: point.file_path,
+      directory: lastSlash > 0 ? point.file_path.substring(0, lastSlash) : '',
+      file_name: point.file_path.split(/[/\\]/).pop() || '',
       file_size: 3500000,
-      file_modified_at: selectedPoint.captured_at || Date.now(),
-      file_hash: `hash_${selectedPoint.id}`,
-      mime_type: selectedPoint.media_type === 'video' ? 'video/mp4' : 'image/jpeg',
-      media_type: selectedPoint.media_type,
+      file_modified_at: point.captured_at || Date.now(),
+      file_hash: `hash_${point.id}`,
+      mime_type: point.media_type === 'video' ? 'video/mp4' : 'image/jpeg',
+      media_type: point.media_type,
       orientation: 1,
-      captured_at: selectedPoint.captured_at,
-      latitude: selectedPoint.latitude,
-      longitude: selectedPoint.longitude,
+      captured_at: point.captured_at,
+      latitude: point.latitude,
+      longitude: point.longitude,
       thumbnail_status: 'ready',
       indexed_at: Date.now(),
       updated_at: Date.now(),
-    });
+    };
+  };
+
+  const handleInspectMedia = () => {
+    if (!selectedPoint) return;
+    setSelectedItem(toMediaItem(selectedPoint));
     setSelectedPoint(null);
+  };
+
+  const handleOpenLightbox = () => {
+    if (!selectedPoint) return;
+    openLightbox([toMediaItem(selectedPoint)], 0);
   };
 
   return (
@@ -237,7 +269,7 @@ export const MapView: React.FC = () => {
           Geotagged Library Media
         </div>
         <div style={{ fontSize: '1.35rem', fontWeight: 700, color: 'var(--text-primary)' }}>
-          {points.length.toLocaleString()} Coordinates
+          {filteredPoints.length.toLocaleString()} Coordinates
         </div>
         <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
           Zoom Level: {activeZoom} • {clusterCount} viewport clusters
@@ -259,7 +291,7 @@ export const MapView: React.FC = () => {
             display: 'flex',
             alignItems: 'center',
             gap: 16,
-            minWidth: 360,
+            minWidth: 380,
             boxShadow: 'var(--shadow-lg)',
           }}
         >
@@ -271,7 +303,10 @@ export const MapView: React.FC = () => {
               overflow: 'hidden',
               flexShrink: 0,
               backgroundColor: 'rgba(0,0,0,0.5)',
+              cursor: 'pointer',
             }}
+            onClick={handleOpenLightbox}
+            title="Click to view fullscreen"
           >
             <img
               src={getThumbnailUrl(`hash_${selectedPoint.id}`, selectedPoint.media_type)}
@@ -290,7 +325,10 @@ export const MapView: React.FC = () => {
           </div>
 
           <div style={{ display: 'flex', gap: 8 }}>
-            <button className="btn-primary" onClick={handleInspectMedia} style={{ padding: '6px 12px', fontSize: '0.75rem' }}>
+            <button className="btn-primary" onClick={handleOpenLightbox} style={{ padding: '6px 12px', fontSize: '0.75rem' }}>
+              View
+            </button>
+            <button className="btn-secondary" onClick={handleInspectMedia} style={{ padding: '6px 10px', fontSize: '0.75rem' }}>
               Inspect
             </button>
             <button className="btn-secondary" onClick={() => setSelectedPoint(null)} style={{ padding: '6px 10px', fontSize: '0.75rem' }}>

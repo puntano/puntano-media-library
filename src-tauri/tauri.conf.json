@@ -12,6 +12,7 @@
   "app": {
     "windows": [
       {
+        "label": "main",
         "title": "Puntano Media Library",
         "width": 1400,
         "height": 900,
@@ -22,7 +23,7 @@
       }
     ],
     "security": {
-      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' asset: http://asset.localhost blob: data: https://*.tile.openstreetmap.org https://demotiles.maplibre.org"
+      "csp": "default-src 'self' 'unsafe-inline' 'unsafe-eval' asset: http://asset.localhost blob: data: https://*.tile.openstreetmap.org https://demotiles.maplibre.org puntano-thumb: http://puntano-thumb.localhost"
     }
   },
   "bundle": {

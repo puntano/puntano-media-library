@@ -325,9 +325,16 @@ function runIndexingBenchmark() {
   // Cleanup with Windows retry handling for antivirus/indexer file locks
   db.close();
   const rmOpts = { recursive: true, force: true, maxRetries: 10, retryDelay: 100 };
-  fs.rmSync(DB_FILE, { force: true });
-  fs.rmSync(TEST_DIR, rmOpts);
-  fs.rmSync(cacheBaseDir, rmOpts);
+  const safeRm = (targetPath) => {
+    try {
+      fs.rmSync(targetPath, rmOpts);
+    } catch {
+      // Background Windows handle held by defender or search indexer
+    }
+  };
+  safeRm(DB_FILE);
+  safeRm(TEST_DIR);
+  safeRm(cacheBaseDir);
 
   console.log('\n' + '='.repeat(80));
   console.log('  ALL CORE INDEXING & SPATIAL QUERIES VERIFIED SUCCESSFULLY!');

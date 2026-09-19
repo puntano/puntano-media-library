@@ -75,3 +75,12 @@ export interface MediaFilterQuery {
   limit?: number;
   offset?: number;
 }
+
+export interface LibraryInfo {
+  id: number;
+  path: string;
+  is_active: boolean;
+  last_scanned_at?: number;
+  total_files: number;
+  created_at: number;
+}

@@ -150,3 +150,26 @@ impl VideoMetadataParser {
         None
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_parse_iso6709_coordinates() {
+        let res = VideoMetadataParser::parse_iso6709("+34.0522-118.2437/");
+        assert!(res.is_some());
+        let (lat, lon) = res.unwrap();
+        assert!((lat - 34.0522).abs() < 1e-4);
+        assert!((lon - (-118.2437)).abs() < 1e-4);
+
+        let res2 = VideoMetadataParser::parse_iso6709("+51.5074-000.1278+015.000/");
+        assert!(res2.is_some());
+        let (lat2, lon2) = res2.unwrap();
+        assert!((lat2 - 51.5074).abs() < 1e-4);
+        assert!((lon2 - (-0.1278)).abs() < 1e-4);
+
+        let invalid = VideoMetadataParser::parse_iso6709("invalid_non_coordinates");
+        assert!(invalid.is_none());
+    }
+}

@@ -1,10 +1,34 @@
 import React, { useState } from 'react';
+import { open } from '@tauri-apps/plugin-dialog';
 import { useLibraryStore } from '../../stores/libraryStore';
-import { tauriApi } from '../../services/tauriApi';
+import { tauriApi, isTauri } from '../../services/tauriApi';
 
 export const IndexingPanel: React.FC<{ onClose: () => void }> = ({ onClose }) => {
   const [folderPath, setFolderPath] = useState('');
-  const { isIndexing, setIsIndexing, indexingProgress, setIndexingProgress } = useLibraryStore();
+  const { isIndexing, setIsIndexing, indexingProgress, setIndexingProgress, setTotalMediaCount } =
+    useLibraryStore();
+
+  const handleBrowseFolder = async () => {
+    if (!isTauri()) {
+      const mockDir = prompt('Enter local folder path for browser mock:', 'C:\\Pictures\\Library');
+      if (mockDir) setFolderPath(mockDir);
+      return;
+    }
+
+    try {
+      const selected = await open({
+        directory: true,
+        multiple: false,
+        title: 'Select Media Library Directory',
+      });
+
+      if (selected && typeof selected === 'string') {
+        setFolderPath(selected);
+      }
+    } catch (err) {
+      console.error('Directory picker failed:', err);
+    }
+  };
 
   const handleStartIndexing = async () => {
     if (!folderPath.trim()) return;
@@ -16,6 +40,7 @@ export const IndexingPanel: React.FC<{ onClose: () => void }> = ({ onClose }) =>
         setIndexingProgress(progress);
         if (progress.is_complete) {
           setIsIndexing(false);
+          tauriApi.getTotalMediaCount().then((count) => setTotalMediaCount(count));
           unlisten();
         }
       });
@@ -48,7 +73,7 @@ export const IndexingPanel: React.FC<{ onClose: () => void }> = ({ onClose }) =>
       <div
         className="glass-panel"
         style={{
-          width: 540,
+          width: 560,
           borderRadius: 'var(--radius-lg)',
           padding: 28,
           display: 'flex',
@@ -59,7 +84,7 @@ export const IndexingPanel: React.FC<{ onClose: () => void }> = ({ onClose }) =>
         <div>
           <h3 style={{ fontSize: '1.25rem', fontWeight: 700 }}>Index Media Library</h3>
           <p style={{ fontSize: '0.875rem', color: 'var(--text-secondary)', marginTop: 4 }}>
-            Non-blocking multi-threaded scanning, EXIF/GPS parsing, and batch database ingestion.
+            Non-blocking multi-threaded scanning, header-only EXIF/GPS parsing, and batch SQLite ingestion.
           </p>
         </div>
 
@@ -67,31 +92,45 @@ export const IndexingPanel: React.FC<{ onClose: () => void }> = ({ onClose }) =>
           <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 8 }}>
             Local Library Directory Path
           </label>
-          <input
-            type="text"
-            value={folderPath}
-            onChange={(e) => setFolderPath(e.target.value)}
-            placeholder="e.g. C:\Users\YourName\Pictures or /Users/yourname/Pictures"
-            disabled={isIndexing}
-            style={{
-              width: '100%',
-              padding: '10px 14px',
-              backgroundColor: 'var(--bg-secondary)',
-              border: '1px solid var(--surface-glass-border)',
-              borderRadius: 'var(--radius-md)',
-              color: 'var(--text-primary)',
-              fontSize: '0.875rem',
-              outline: 'none',
-            }}
-          />
+          <div style={{ display: 'flex', gap: 8 }}>
+            <input
+              type="text"
+              value={folderPath}
+              onChange={(e) => setFolderPath(e.target.value)}
+              placeholder="e.g. C:\Users\YourName\Pictures or /Users/yourname/Pictures"
+              disabled={isIndexing}
+              style={{
+                flex: 1,
+                padding: '10px 14px',
+                backgroundColor: 'var(--bg-secondary)',
+                border: '1px solid var(--surface-glass-border)',
+                borderRadius: 'var(--radius-md)',
+                color: 'var(--text-primary)',
+                fontSize: '0.875rem',
+                outline: 'none',
+              }}
+            />
+            <button
+              className="btn-secondary"
+              onClick={handleBrowseFolder}
+              disabled={isIndexing}
+              type="button"
+              style={{ whiteSpace: 'nowrap' }}
+            >
+              📁 Browse...
+            </button>
+          </div>
         </div>
 
         {isIndexing && indexingProgress && (
           <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
             <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.8rem', color: 'var(--text-secondary)' }}>
-              <span>Stage: <strong>{indexingProgress.stage}</strong></span>
               <span>
-                {indexingProgress.indexed_files.toLocaleString()} files indexed ({((indexingProgress.indexed_files / Math.max(1, indexingProgress.scanned_files)) * 100).toFixed(0)}%)
+                Stage: <strong style={{ textTransform: 'capitalize' }}>{indexingProgress.stage}</strong>
+              </span>
+              <span>
+                {indexingProgress.indexed_files.toLocaleString()} files indexed (
+                {((indexingProgress.indexed_files / Math.max(1, indexingProgress.scanned_files)) * 100).toFixed(0)}%)
               </span>
             </div>
 

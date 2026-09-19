@@ -83,3 +83,13 @@ pub struct IndexingProgressEvent {
     pub is_complete: bool,
     pub elapsed_ms: u64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryInfo {
+    pub id: i64,
+    pub path: String,
+    pub is_active: bool,
+    pub last_scanned_at: Option<i64>,
+    pub total_files: i64,
+    pub created_at: i64,
+}

@@ -1,6 +1,7 @@
 import React, { useEffect, useState } from 'react';
+import { Film, Image as ImageIcon, Calendar } from 'lucide-react';
 import { tauriApi } from '../../services/tauriApi';
-import { MediaItem, TimelineGroup } from '../../types/media';
+import { MediaItem, TimelineGroup, MediaFilterQuery } from '../../types/media';
 import { useLibraryStore } from '../../stores/libraryStore';
 import { getThumbnailUrl } from '../../services/thumbnailProtocol';
 
@@ -11,7 +12,13 @@ export const TimelineView: React.FC = () => {
   const [selectedYearFilter, setSelectedYearFilter] = useState<string>('all');
   const [isLoadingItems, setIsLoadingItems] = useState<boolean>(false);
 
-  const { setSelectedItem, openLightbox } = useLibraryStore();
+  const {
+    setSelectedItem,
+    openLightbox,
+    mediaTypeFilter,
+    searchQuery,
+    hasGpsOnly,
+  } = useLibraryStore();
 
   useEffect(() => {
     tauriApi.queryTimelineGroups().then((data) => {
@@ -22,24 +29,49 @@ export const TimelineView: React.FC = () => {
     });
   }, []);
 
-  // Fetch items for the active period
+  // Fetch items for the active period + active filters
   useEffect(() => {
     if (!selectedPeriod) return;
     setIsLoadingItems(true);
-    tauriApi.queryMediaPaged(60, 0).then((data) => {
-      setItems(data);
-      setIsLoadingItems(false);
-    });
-  }, [selectedPeriod]);
+
+    const [yearStr, monthStr] = selectedPeriod.split('-');
+    const year = parseInt(yearStr, 10);
+    const month = parseInt(monthStr, 10);
+
+    const startDate = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0)).getTime();
+    const endDate = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999)).getTime();
+
+    const query: MediaFilterQuery = {
+      date_from: startDate,
+      date_to: endDate,
+      media_type: mediaTypeFilter === 'all' ? undefined : mediaTypeFilter,
+      query_text: searchQuery.trim() || undefined,
+      has_gps_only: hasGpsOnly ? true : undefined,
+      limit: 200,
+      offset: 0,
+    };
+
+    tauriApi
+      .searchMedia(query)
+      .then((data) => {
+        setItems(data);
+        setIsLoadingItems(false);
+      })
+      .catch((err) => {
+        console.error('Failed to query period media:', err);
+        setIsLoadingItems(false);
+      });
+  }, [selectedPeriod, mediaTypeFilter, searchQuery, hasGpsOnly]);
 
   const totalTimelineFiles = groups.reduce((acc, g) => acc + g.count, 0);
 
   // Extract unique years for the filter bar
   const years = Array.from(new Set(groups.map((g) => g.period.split('-')[0]))).sort().reverse();
 
-  const filteredGroups = selectedYearFilter === 'all'
-    ? groups
-    : groups.filter((g) => g.period.startsWith(selectedYearFilter));
+  const filteredGroups =
+    selectedYearFilter === 'all'
+      ? groups
+      : groups.filter((g) => g.period.startsWith(selectedYearFilter));
 
   return (
     <div style={{ display: 'flex', width: '100%', height: '100%', overflow: 'hidden' }}>
@@ -56,7 +88,8 @@ export const TimelineView: React.FC = () => {
         }}
       >
         <div style={{ padding: '20px 24px', borderBottom: '1px solid var(--surface-glass-border)' }}>
-          <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: '0.75rem', color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}>
+            <Calendar size={13} />
             Chronological Archive
           </div>
           <div style={{ fontSize: '1.35rem', fontWeight: 700, color: 'var(--text-primary)', marginTop: 4 }}>
@@ -155,13 +188,17 @@ export const TimelineView: React.FC = () => {
             {selectedPeriod ? `Media from ${selectedPeriod}` : 'Chronological Timeline'}
           </h2>
           <p style={{ color: 'var(--text-secondary)', fontSize: '0.875rem' }}>
-            Fast B-Tree range query executed directly against SQLite • Click any photo to inspect metadata
+            B-Tree range query executed against SQLite • Click to inspect or open fullscreen lightbox
           </p>
         </div>
 
         {isLoadingItems ? (
           <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
             Loading period records...
+          </div>
+        ) : items.length === 0 ? (
+          <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>
+            No media found in {selectedPeriod} matching current filters.
           </div>
         ) : (
           <div
@@ -176,7 +213,7 @@ export const TimelineView: React.FC = () => {
                 key={item.id}
                 onClick={() => setSelectedItem(item)}
                 onDoubleClick={() => openLightbox(items, idx)}
-                title="Double click to open fullscreen lightbox"
+                title="Click to inspect, double-click for fullscreen lightbox"
                 className="glass-panel"
                 style={{
                   aspectRatio: '1',
@@ -209,14 +246,15 @@ export const TimelineView: React.FC = () => {
                       position: 'absolute',
                       top: 8,
                       right: 8,
-                      padding: '2px 6px',
+                      padding: '3px 6px',
                       borderRadius: 4,
                       backgroundColor: 'rgba(0, 0, 0, 0.65)',
-                      fontSize: '0.65rem',
-                      fontWeight: 600,
+                      display: 'flex',
+                      alignItems: 'center',
+                      justifyContent: 'center',
                     }}
                   >
-                    {item.media_type === 'video' ? '🎬' : '📷'}
+                    {item.media_type === 'video' ? <Film size={11} color="#ffffff" /> : <ImageIcon size={11} color="#ffffff" />}
                   </div>
                 </div>
 

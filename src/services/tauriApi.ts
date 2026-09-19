@@ -1,6 +1,6 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { MediaItem, SpatialClusterPoint, TimelineGroup, IndexingProgressEvent } from '../types/media';
+import { MediaItem, SpatialClusterPoint, TimelineGroup, IndexingProgressEvent, LibraryInfo } from '../types/media';
 
 // Check if running inside native Tauri runtime
 export const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -22,6 +22,54 @@ export const tauriApi = {
   async getTotalMediaCount(): Promise<number> {
     if (!isTauri()) return 12480;
     return await invoke<number>('get_total_media_count');
+  },
+
+  async getLibraries(): Promise<LibraryInfo[]> {
+    if (!isTauri()) {
+      return [
+        {
+          id: 1,
+          path: 'C:\\Users\\User\\Pictures\\Photos_2026',
+          is_active: true,
+          last_scanned_at: Date.now() - 3600000,
+          total_files: 8420,
+          created_at: Date.now() - 86400000 * 30,
+        },
+        {
+          id: 2,
+          path: 'D:\\Archive\\Vacation_Videos',
+          is_active: true,
+          last_scanned_at: Date.now() - 7200000,
+          total_files: 4060,
+          created_at: Date.now() - 86400000 * 15,
+        },
+      ];
+    }
+    return await invoke<LibraryInfo[]>('get_libraries');
+  },
+
+  async removeLibrary(libraryId: number): Promise<void> {
+    if (!isTauri()) {
+      console.warn('[Mock] removeLibrary:', libraryId);
+      return;
+    }
+    await invoke('remove_library', { libraryId });
+  },
+
+  async pruneMissingFiles(): Promise<number> {
+    if (!isTauri()) {
+      console.warn('[Mock] pruneMissingFiles');
+      return 0;
+    }
+    return await invoke<number>('prune_missing_files');
+  },
+
+  async showInFolder(path: string): Promise<void> {
+    if (!isTauri()) {
+      console.warn('[Mock] showInFolder:', path);
+      return;
+    }
+    await invoke('show_in_folder', { path });
   },
 
   async querySpatialBoundingBox(

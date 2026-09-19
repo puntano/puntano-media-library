@@ -130,3 +130,28 @@ impl DirectoryWalker {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_classify_media_types() {
+        assert_eq!(DirectoryWalker::classify_media("jpg"), ("photo".into(), "image/jpeg".into()));
+        assert_eq!(DirectoryWalker::classify_media("png"), ("photo".into(), "image/png".into()));
+        assert_eq!(DirectoryWalker::classify_media("dng"), ("raw".into(), "image/x-adobe-dng".into()));
+        assert_eq!(DirectoryWalker::classify_media("mp4"), ("video".into(), "video/mp4".into()));
+        assert_eq!(DirectoryWalker::classify_media("mov"), ("video".into(), "video/quicktime".into()));
+    }
+
+    #[test]
+    fn test_extension_support() {
+        let valid: std::collections::HashSet<&str> = SUPPORTED_EXTENSIONS.iter().cloned().collect();
+        assert!(valid.contains("jpg"));
+        assert!(valid.contains("heic"));
+        assert!(valid.contains("arw"));
+        assert!(valid.contains("mp4"));
+        assert!(!valid.contains("exe"));
+        assert!(!valid.contains("txt"));
+    }
+}

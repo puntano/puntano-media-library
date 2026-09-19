@@ -57,7 +57,7 @@ impl LibraryWatcher {
     }
 
     fn handle_fs_event(app_handle: &AppHandle, db_path: &Path, event: Event) {
-        let conn = match DatabaseManager::open(db_path) {
+        let mut conn = match DatabaseManager::open(db_path) {
             Ok(c) => c,
             Err(_) => return,
         };
@@ -69,7 +69,7 @@ impl LibraryWatcher {
 
             match event.kind {
                 EventKind::Create(_) | EventKind::Modify(_) => {
-                    Self::sync_single_file(app_handle, &conn, &path);
+                    Self::sync_single_file(app_handle, &mut conn, &path);
                 }
                 EventKind::Remove(_) => {
                     let path_str = path.to_string_lossy().to_string();
@@ -84,7 +84,7 @@ impl LibraryWatcher {
         }
     }
 
-    fn sync_single_file(app_handle: &AppHandle, conn: &rusqlite::Connection, path: &Path) {
+    fn sync_single_file(app_handle: &AppHandle, conn: &mut rusqlite::Connection, path: &Path) {
         let metadata = match path.metadata() {
             Ok(m) => m,
             Err(_) => return,
@@ -105,6 +105,20 @@ impl LibraryWatcher {
             return;
         }
 
+        // Dynamically match against registered libraries
+        let library_id: i64 = {
+            let mut stmt = conn.prepare_cached("SELECT id, path FROM libraries WHERE is_active = 1;").ok();
+            stmt.and_then(|mut s| {
+                s.query_map([], |row| Ok((row.get::<_, i64>(0)?, row.get::<_, String>(1)?)))
+                    .ok()
+                    .and_then(|iter| {
+                        iter.flatten()
+                            .find(|(_, lib_path)| path_str.starts_with(lib_path))
+                            .map(|(id, _)| id)
+                    })
+            }).unwrap_or(1)
+        };
+
         let ext = path
             .extension()
             .and_then(|s| s.to_str())
@@ -120,7 +134,7 @@ impl LibraryWatcher {
 
         let mut item = MediaItem {
             id: None,
-            library_id: 1,
+            library_id,
             file_path: path_str.clone(),
             directory: path.parent().map(|p| p.to_string_lossy().to_string()).unwrap_or_default(),
             file_name: path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default(),
@@ -172,12 +186,8 @@ impl LibraryWatcher {
             item.camera_model = p.camera_model;
         }
 
-        // Insert into database
-        let mut mut_conn = match rusqlite::Connection::open(conn.path().unwrap_or("")) {
-            Ok(c) => c,
-            Err(_) => return,
-        };
-        let _ = MediaRepository::insert_batch(&mut mut_conn, &[item]);
+        // Insert into database using the active WAL connection
+        let _ = MediaRepository::insert_batch(conn, &[item]);
         let _ = app_handle.emit("library-incremental-sync", path_str);
     }
 
