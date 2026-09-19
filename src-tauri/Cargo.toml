@@ -1,0 +1,45 @@
+[package]
+name = "puntano-media-library"
+version = "0.1.0"
+description = "High-Performance Cross-Platform Media Library"
+authors = ["Puntano Team"]
+edition = "2021"
+
+[lib]
+name = "puntano_media_library_lib"
+crate-type = ["staticlib", "cdylib", "rlib"]
+
+[build-dependencies]
+tauri-build = { version = "2.1", features = [] }
+
+[dependencies]
+# Tauri Core
+tauri = { version = "2.1", features = [] }
+tauri-plugin-dialog = "2"
+tauri-plugin-fs = "2"
+
+# Serialization & JSON
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
+
+# High-Performance SQLite with bundled R*Tree spatial extension
+rusqlite = { version = "0.32", features = ["bundled", "rtree"] }
+
+# Multi-threaded concurrent indexing pipeline
+walkdir = "2.5"
+rayon = "1.10"
+tokio = { version = "1", features = ["full"] }
+crossbeam-channel = "0.5"
+
+# Fast EXIF and Video ISO BMFF atom parsing
+nom-exif = "3.8"
+
+# Ultra-fast hashing
+xxhash-rust = { version = "0.8", features = ["xxh64"] }
+
+# Date, Time & Coordinates
+chrono = { version = "0.4", features = ["serde"] }
+
+# Logging
+log = "0.4"
+env_logger = "0.11"

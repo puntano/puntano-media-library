@@ -1,0 +1,35 @@
+# OS & System files
+.DS_Store
+Thumbs.db
+desktop.ini
+
+# Node dependencies & builds
+node_modules/
+dist/
+dist-ssr/
+*.local
+
+# Rust & Tauri builds
+/src-tauri/target/
+/src-tauri/Cargo.lock
+
+# SQLite local databases & test runs
+*.db
+*.db-journal
+*.db-wal
+*.db-shm
+test-data/
+scratch/
+
+# IDE files
+.vscode/*
+!.vscode/extensions.json
+!.vscode/launch.json
+.idea/
+*.swp
+*.swo
+
+# Environment files
+.env
+.env.*
+!.env.example
