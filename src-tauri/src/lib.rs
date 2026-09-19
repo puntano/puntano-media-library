@@ -3,29 +3,72 @@ pub mod db;
 pub mod indexer;
 pub mod metadata;
 pub mod models;
+pub mod thumbnails;
 
 use std::fs;
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
+use tauri::http::{header, Response};
 use tauri::Manager;
 
 use commands::indexing::AppState;
 use db::DatabaseManager;
+use thumbnails::{ThumbnailCache, ThumbnailWorker};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    let cancel_token = Arc::new(AtomicBool::new(false));
+    let cancel_worker = cancel_token.clone();
+
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
-        .setup(|app| {
-            // Locate or create application data directory
+        .register_uri_scheme_protocol("puntano-thumb", move |ctx, request| {
+            // Stream thumbnail directly from disk cache to WebViews with zero IPC serialization
+            let path = request.uri().path();
+            let file_hash = path.trim_start_matches('/').trim_end_matches(".webp");
+
+            let app_handle = ctx.app_handle();
+            let cache_dir = app_handle
+                .path()
+                .app_cache_dir()
+                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+            let cache = ThumbnailCache::new(&cache_dir);
+            let target_file = cache.resolve_path(file_hash);
+
+            if target_file.exists() {
+                if let Ok(bytes) = fs::read(&target_file) {
+                    return Response::builder()
+                        .header(header::CONTENT_TYPE, "image/webp")
+                        .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+                        .body(bytes);
+                }
+            }
+
+            // 404 fallback if thumbnail is still pending or not found
+            Response::builder()
+                .status(404)
+                .header(header::CONTENT_TYPE, "text/plain")
+                .body(b"Thumbnail not ready".to_vec())
+        })
+        .setup(move |app| {
+            // Locate or create application data & cache directories
             let app_data_dir = app
                 .path()
                 .app_data_dir()
                 .expect("Failed to resolve app data dir");
 
+            let app_cache_dir = app
+                .path()
+                .app_cache_dir()
+                .expect("Failed to resolve app cache dir");
+
             if !app_data_dir.exists() {
                 fs::create_dir_all(&app_data_dir).expect("Failed to create app data dir");
+            }
+            if !app_cache_dir.exists() {
+                fs::create_dir_all(&app_cache_dir).expect("Failed to create app cache dir");
             }
 
             let db_path = app_data_dir.join("puntano.db");
@@ -43,9 +86,16 @@ pub fn run() {
                 eprintln!("[Puntano Engine] WARNING: SQLite R*Tree module was not detected!");
             }
 
+            // Spawn background decoupled thumbnail generation daemon
+            ThumbnailWorker::start_daemon(
+                db_path.clone(),
+                app_cache_dir,
+                cancel_worker,
+            );
+
             app.manage(AppState {
                 db_path,
-                cancel_token: Arc::new(AtomicBool::new(false)),
+                cancel_token,
             });
 
             Ok(())

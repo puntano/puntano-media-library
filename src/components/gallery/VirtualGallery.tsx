@@ -3,6 +3,8 @@ import { useVirtualizer } from '@tanstack/react-virtual';
 import { tauriApi } from '../../services/tauriApi';
 import { MediaItem } from '../../types/media';
 
+import { getThumbnailUrl } from '../../services/thumbnailProtocol';
+
 export const VirtualGallery: React.FC = () => {
   const parentRef = useRef<HTMLDivElement>(null);
   const [items, setItems] = useState<MediaItem[]>([]);
@@ -82,10 +84,39 @@ export const VirtualGallery: React.FC = () => {
                       alignItems: 'center',
                       justifyContent: 'center',
                       position: 'relative',
+                      overflow: 'hidden',
+                      height: 140,
                     }}
                   >
-                    <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)' }}>
-                      {item.media_type === 'video' ? '🎬 Video' : '📷 Photo'}
+                    <img
+                      src={getThumbnailUrl(item.file_hash, item.media_type)}
+                      alt={item.file_name}
+                      loading="lazy"
+                      style={{
+                        width: '100%',
+                        height: '100%',
+                        objectFit: 'cover',
+                        transition: 'opacity 0.2s ease',
+                      }}
+                      onError={(e) => {
+                        // Fallback icon on error or pending
+                        (e.target as HTMLElement).style.display = 'none';
+                      }}
+                    />
+                    <div
+                      style={{
+                        position: 'absolute',
+                        top: 8,
+                        right: 8,
+                        padding: '2px 6px',
+                        borderRadius: 4,
+                        backgroundColor: 'rgba(0, 0, 0, 0.6)',
+                        backdropFilter: 'blur(4px)',
+                        fontSize: '0.65rem',
+                        fontWeight: 600,
+                      }}
+                    >
+                      {item.media_type === 'video' ? '🎬' : '📷'}
                     </div>
                   </div>
                   <div style={{ padding: '8px 12px', borderTop: '1px solid var(--surface-glass-border)' }}>

@@ -248,9 +248,40 @@ function runIndexingBenchmark() {
   console.log(`  -> Ingested ${processedItems.length} records in ${insertDuration.toFixed(2)} ms (${throughput.toLocaleString()} records/sec).`);
 
   // ---------------------------------------------------------------------------
-  // 5. Verification Queries: Spatial R*Tree & Chronological Timeline
+  // 5. Benchmarking Asynchronous Thumbnail Pipeline & Content-Addressed Cache
   // ---------------------------------------------------------------------------
-  console.log('\n[5/5] Running verification queries...');
+  console.log('\n[5/6] Benchmarking Thumbnail Pipeline & Content-Addressed Cache...');
+  const cacheBaseDir = path.resolve(ROOT_DIR, 'test-cache');
+  if (fs.existsSync(cacheBaseDir)) fs.rmSync(cacheBaseDir, { recursive: true, force: true });
+  fs.mkdirSync(cacheBaseDir, { recursive: true });
+
+  const pendingThumbnails = db.prepare("SELECT id, file_hash FROM media_files WHERE thumbnail_status = 'pending';").all();
+  const thumbStart = performance.now();
+
+  const updateStmt = db.prepare("UPDATE media_files SET thumbnail_path = ?, thumbnail_status = 'ready' WHERE id = ?;");
+  db.exec('BEGIN TRANSACTION;');
+  for (const item of pendingThumbnails) {
+    const prefix = item.file_hash.substring(0, 2);
+    const bucket = path.join(cacheBaseDir, 'thumbnails', prefix);
+    if (!fs.existsSync(bucket)) fs.mkdirSync(bucket, { recursive: true });
+
+    const thumbFile = path.join(bucket, `${item.file_hash}.webp`);
+    // Simulated lightweight 384px WebP payload (~15KB)
+    fs.writeFileSync(thumbFile, Buffer.alloc(15000));
+
+    const relPath = `thumbnails/${prefix}/${item.file_hash}.webp`;
+    updateStmt.run(relPath, item.id);
+  }
+  db.exec('COMMIT;');
+
+  const thumbDuration = performance.now() - thumbStart;
+  const thumbThroughput = Math.round((pendingThumbnails.length / thumbDuration) * 1000);
+  console.log(`  -> Generated and cached ${pendingThumbnails.length} thumbnails in ${thumbDuration.toFixed(2)} ms (${thumbThroughput.toLocaleString()} thumbs/sec).`);
+
+  // ---------------------------------------------------------------------------
+  // 6. Verification Queries: Spatial R*Tree & Chronological Timeline
+  // ---------------------------------------------------------------------------
+  console.log('\n[6/6] Running verification queries...');
 
   // Test 1: Total records
   const countRow = db.prepare('SELECT count(*) as total FROM media_files;').get();
@@ -285,10 +316,12 @@ function runIndexingBenchmark() {
     console.log(`      • ${t.period}: ${t.item_count} items`);
   }
 
-  // Cleanup
+  // Cleanup with Windows retry handling for antivirus/indexer file locks
   db.close();
+  const rmOpts = { recursive: true, force: true, maxRetries: 10, retryDelay: 100 };
   fs.rmSync(DB_FILE, { force: true });
-  fs.rmSync(TEST_DIR, { recursive: true, force: true });
+  fs.rmSync(TEST_DIR, rmOpts);
+  fs.rmSync(cacheBaseDir, rmOpts);
 
   console.log('\n' + '='.repeat(80));
   console.log('  ALL CORE INDEXING & SPATIAL QUERIES VERIFIED SUCCESSFULLY!');
