@@ -64,3 +64,14 @@ export interface IndexingProgressEvent {
   is_complete: boolean;
   elapsed_ms: number;
 }
+
+export interface MediaFilterQuery {
+  query_text?: string;
+  date_from?: number;
+  date_to?: number;
+  media_type?: 'all' | 'photo' | 'video' | 'raw';
+  camera_make?: string;
+  has_gps_only?: boolean;
+  limit?: number;
+  offset?: number;
+}

@@ -311,10 +311,16 @@ function runIndexingBenchmark() {
     GROUP BY period
     ORDER BY period DESC;
   `).all();
-  console.log(`  ✓ Chronological Timeline Query (Grouped by Month):`);
-  for (const t of timelineQuery) {
-    console.log(`      • ${t.period}: ${t.item_count} items`);
-  }
+  // Test 5: Multi-Criteria Filter Query (Date range + Media type + Location search)
+  const searchQuery = db.prepare(`
+    SELECT count(*) as match_count
+    FROM media_files
+    WHERE (file_name LIKE '%IMG%' OR directory LIKE '%San_Francisco%')
+      AND media_type = 'photo'
+      AND latitude IS NOT NULL
+      AND captured_at >= ?
+  `).get(new Date('2025-01-01').getTime());
+  console.log(`  ✓ Multi-Criteria Filter Query (Date >= 2025 + Photo + Geotagged + SF area): ${searchQuery.match_count} matches.`);
 
   // Cleanup with Windows retry handling for antivirus/indexer file locks
   db.close();

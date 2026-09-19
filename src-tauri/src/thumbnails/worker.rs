@@ -108,8 +108,12 @@ impl ThumbnailWorker {
                     Ok(_) => ready_updates.push((item.id, rel_path)),
                     Err(_) => failed_updates.push(item.id),
                 }
+            } else if item.media_type == "video" {
+                match super::video_extractor::VideoKeyframeExtractor::extract_keyframe(&item.file_path, &dst_path, None) {
+                    Ok(_) => ready_updates.push((item.id, rel_path)),
+                    Err(_) => failed_updates.push(item.id),
+                }
             } else {
-                // For videos, mark pending/skipped until keyframe extraction sidecar is invoked
                 ready_updates.push((item.id, rel_path));
             }
         }

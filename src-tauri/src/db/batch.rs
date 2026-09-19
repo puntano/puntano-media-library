@@ -250,4 +250,115 @@ impl MediaRepository {
     pub fn count_total(conn: &Connection) -> Result<i64> {
         conn.query_row("SELECT count(*) FROM media_files;", [], |row| row.get(0))
     }
+
+    /// Multi-criteria parameterized search and filtering engine
+    pub fn search_media(
+        conn: &Connection,
+        filter: &crate::models::MediaFilterQuery,
+    ) -> Result<Vec<MediaItem>> {
+        let mut sql = String::from(
+            r#"
+            SELECT 
+                id, library_id, file_path, directory, file_name, file_size,
+                file_modified_at, file_hash, mime_type, media_type,
+                width, height, duration, orientation,
+                captured_at, captured_at_local, timezone_offset,
+                latitude, longitude, altitude, geohash,
+                camera_make, camera_model, lens_model, focal_length, aperture, iso, exposure_time,
+                thumbnail_path, thumbnail_status, indexed_at, updated_at
+            FROM media_files
+            WHERE 1=1
+            "#,
+        );
+
+        let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
+
+        if let Some(ref text) = filter.query_text {
+            if !text.trim().is_empty() {
+                let pattern = format!("%{}%", text.trim());
+                sql.push_str(" AND (file_name LIKE ? OR directory LIKE ? OR camera_model LIKE ?)");
+                params.push(Box::new(pattern.clone()));
+                params.push(Box::new(pattern.clone()));
+                params.push(Box::new(pattern));
+            }
+        }
+
+        if let Some(from_date) = filter.date_from {
+            sql.push_str(" AND captured_at >= ?");
+            params.push(Box::new(from_date));
+        }
+
+        if let Some(to_date) = filter.date_to {
+            sql.push_str(" AND captured_at <= ?");
+            params.push(Box::new(to_date));
+        }
+
+        if let Some(ref mtype) = filter.media_type {
+            if mtype != "all" {
+                sql.push_str(" AND media_type = ?");
+                params.push(Box::new(mtype.clone()));
+            }
+        }
+
+        if let Some(ref make) = filter.camera_make {
+            sql.push_str(" AND camera_make = ?");
+            params.push(Box::new(make.clone()));
+        }
+
+        if let Some(true) = filter.has_gps_only {
+            sql.push_str(" AND latitude IS NOT NULL AND longitude IS NOT NULL");
+        }
+
+        sql.push_str(" ORDER BY COALESCE(captured_at, file_modified_at) DESC, id DESC LIMIT ? OFFSET ?;");
+        let limit = filter.limit.unwrap_or(100);
+        let offset = filter.offset.unwrap_or(0);
+        params.push(Box::new(limit));
+        params.push(Box::new(offset));
+
+        let mut stmt = conn.prepare(&sql)?;
+        let param_refs: Vec<&dyn rusqlite::types::ToSql> = params.iter().map(|p| p.as_ref()).collect();
+
+        let rows = stmt.query_map(param_refs.as_slice(), |row| {
+            Ok(MediaItem {
+                id: Some(row.get(0)?),
+                library_id: row.get(1)?,
+                file_path: row.get(2)?,
+                directory: row.get(3)?,
+                file_name: row.get(4)?,
+                file_size: row.get(5)?,
+                file_modified_at: row.get(6)?,
+                file_hash: row.get(7)?,
+                mime_type: row.get(8)?,
+                media_type: row.get(9)?,
+                width: row.get(10)?,
+                height: row.get(11)?,
+                duration: row.get(12)?,
+                orientation: row.get(13)?,
+                captured_at: row.get(14)?,
+                captured_at_local: row.get(15)?,
+                timezone_offset: row.get(16)?,
+                latitude: row.get(17)?,
+                longitude: row.get(18)?,
+                altitude: row.get(19)?,
+                geohash: row.get(20)?,
+                camera_make: row.get(21)?,
+                camera_model: row.get(22)?,
+                lens_model: row.get(23)?,
+                focal_length: row.get(24)?,
+                aperture: row.get(25)?,
+                iso: row.get(26)?,
+                exposure_time: row.get(27)?,
+                thumbnail_path: row.get(28)?,
+                thumbnail_status: row.get(29)?,
+                indexed_at: row.get(30)?,
+                updated_at: row.get(31)?,
+            })
+        })?;
+
+        let mut items = Vec::new();
+        for item in rows {
+            items.push(item?);
+        }
+        Ok(items)
+    }
 }

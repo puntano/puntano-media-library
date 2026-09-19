@@ -48,3 +48,14 @@ pub fn query_media_paged(
 
     MediaRepository::query_media_paged(&conn, limit, offset).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn search_media(
+    state: State<'_, AppState>,
+    query: crate::models::MediaFilterQuery,
+) -> Result<Vec<MediaItem>, String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+
+    MediaRepository::search_media(&conn, &query).map_err(|e| e.to_string())
+}

@@ -5,6 +5,7 @@ import { TimelineView } from './components/timeline/TimelineView';
 import { VirtualGallery } from './components/gallery/VirtualGallery';
 import { IndexingPanel } from './components/indexing/IndexingPanel';
 import { MetadataDrawer } from './components/inspector/MetadataDrawer';
+import { FilterBar } from './components/search/FilterBar';
 
 export const App: React.FC = () => {
   const { activeView, setActiveView, mediaTypeFilter, setMediaTypeFilter, totalMediaCount } = useLibraryStore();
@@ -157,6 +158,9 @@ export const App: React.FC = () => {
           </button>
         </div>
       </header>
+
+      {/* Multi-Criteria Search & Filter Bar */}
+      <FilterBar />
 
       {/* Main View Area */}
       <main style={{ flex: 1, position: 'relative', overflow: 'hidden' }}>

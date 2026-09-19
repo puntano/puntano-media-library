@@ -85,6 +85,32 @@ export const tauriApi = {
     return await invoke<MediaItem[]>('query_media_paged', { limit, offset });
   },
 
+  async searchMedia(query: import('../types/media').MediaFilterQuery): Promise<MediaItem[]> {
+    if (!isTauri()) {
+      const limit = query.limit || 50;
+      return Array.from({ length: limit }).map((_, i) => ({
+        id: i + 1,
+        library_id: 1,
+        file_path: `/mock/search/MATCH_${query.query_text || 'ITEM'}_${i + 1}.JPG`,
+        directory: '/mock/search',
+        file_name: `MATCH_${query.query_text || 'ITEM'}_${i + 1}.JPG`,
+        file_size: 3800000,
+        file_modified_at: Date.now() - i * 86400000,
+        file_hash: `search_hash_${i + 1}`,
+        mime_type: query.media_type === 'video' ? 'video/mp4' : 'image/jpeg',
+        media_type: (query.media_type === 'video' ? 'video' : 'photo') as any,
+        orientation: 1,
+        captured_at: Date.now() - i * 86400000,
+        thumbnail_status: 'ready',
+        camera_make: query.camera_make || 'Sony',
+        camera_model: 'A7 IV',
+        indexed_at: Date.now(),
+        updated_at: Date.now(),
+      }));
+    }
+    return await invoke<MediaItem[]>('search_media', { query });
+  },
+
   onIndexingProgress(callback: (event: IndexingProgressEvent) => void): Promise<UnlistenFn> {
     if (!isTauri()) {
       return Promise.resolve(() => {});
