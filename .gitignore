@@ -22,6 +22,8 @@ dist-installers/
 *.db-shm
 test-data/
 scratch/
+out.txt
+err.txt
 
 # IDE files
 .vscode/*
