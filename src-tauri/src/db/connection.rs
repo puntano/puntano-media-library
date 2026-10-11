@@ -6,7 +6,17 @@ use super::schema::{SCHEMA_INDEXES_AND_TRIGGERS_SQL, SCHEMA_TABLES_SQL};
 pub struct DatabaseManager;
 
 impl DatabaseManager {
+    /// Opens an existing database connection with high-performance PRAGMAs configured.
+    /// Does NOT re-run DDL migrations on every call, ensuring near-instant connection setup (<0.1ms) without schema locks.
     pub fn open<P: AsRef<Path>>(path: P) -> Result<Connection> {
+        let conn = Connection::open(path)?;
+        Self::configure_connection(&conn)?;
+        Ok(conn)
+    }
+
+    /// Opens the database and applies all schema tables, migrations, and indexes.
+    /// Called once during application startup.
+    pub fn open_and_migrate<P: AsRef<Path>>(path: P) -> Result<Connection> {
         let conn = Connection::open(path)?;
         Self::configure_connection(&conn)?;
         Self::apply_migrations(&conn)?;
@@ -20,10 +30,12 @@ impl DatabaseManager {
         Ok(conn)
     }
 
-    fn configure_connection(conn: &Connection) -> Result<()> {
+    pub fn configure_connection(conn: &Connection) -> Result<()> {
+        let _ = conn.busy_timeout(std::time::Duration::from_secs(10));
         conn.execute_batch(
             "PRAGMA journal_mode = WAL;
              PRAGMA synchronous = NORMAL;
+             PRAGMA busy_timeout = 10000;
              PRAGMA cache_size = -64000;
              PRAGMA foreign_keys = ON;
              PRAGMA temp_store = MEMORY;

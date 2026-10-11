@@ -205,7 +205,10 @@ export const MapView: React.FC = () => {
     const clusters = clusterIndex.current.getClusters(bbox, zoom);
     setClusterCount(clusters.length);
 
-    for (const cluster of clusters) {
+    // Cap visible DOM markers to 120 to prevent DOM thrashing
+    const visibleClusters = clusters.slice(0, 120);
+
+    for (const cluster of visibleClusters) {
       const [longitude, latitude] = cluster.geometry.coordinates;
       const isCluster = cluster.properties.cluster;
 
@@ -521,7 +524,7 @@ export const MapView: React.FC = () => {
                 No geotagged media found in this visible map area • Pan or zoom out to discover photos
               </div>
             ) : (
-              filteredPoints.slice(0, 100).map((p) => {
+              filteredPoints.slice(0, 50).map((p) => {
                 const isSelected = selectedPoint?.id === p.id;
                 const fileName = p.file_path.split(/[/\\]/).pop() || '';
                 return (

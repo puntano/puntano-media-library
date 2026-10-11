@@ -3,10 +3,12 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 
-use rusqlite::{params, Connection};
+use rayon::prelude::*;
+use rusqlite::params;
 
 use super::cache::ThumbnailCache;
 use super::resizer::ThumbnailResizer;
+use crate::db::DatabaseManager;
 
 pub struct ThumbnailWorker;
 
@@ -20,7 +22,8 @@ struct PendingThumbnailItem {
 
 impl ThumbnailWorker {
     /// Starts the background thumbnail generation daemon.
-    /// Runs asynchronously and drains the 'pending' queue without blocking the UI or main thread.
+    /// Runs asynchronously and drains the 'pending' queue in parallel across Rayon worker threads
+    /// without blocking the UI or main application thread.
     pub fn start_daemon(
         db_path: PathBuf,
         cache_dir: PathBuf,
@@ -37,6 +40,9 @@ impl ThumbnailWorker {
                     if processed_count == 0 {
                         // Sleep if queue is empty
                         std::thread::sleep(Duration::from_millis(500));
+                    } else {
+                        // Yield to keep CPU cool and give UI read queries priority on SQLite
+                        std::thread::sleep(Duration::from_millis(25));
                     }
                 }
             })
@@ -48,19 +54,19 @@ impl ThumbnailWorker {
         cache: &ThumbnailCache,
         cancel_token: &Arc<AtomicBool>,
     ) -> usize {
-        let mut conn = match Connection::open(db_path) {
+        let mut conn = match DatabaseManager::open(db_path) {
             Ok(c) => c,
             Err(_) => return 0,
         };
 
-        // Fetch up to 50 pending items
+        // Fetch up to 80 pending items
         let mut items = Vec::new();
         {
             let mut stmt = match conn.prepare(
                 "SELECT id, file_path, file_hash, media_type 
                  FROM media_files 
                  WHERE thumbnail_status = 'pending' 
-                 LIMIT 50;"
+                 LIMIT 80;"
             ) {
                 Ok(s) => s,
                 Err(_) => return 0,
@@ -86,39 +92,43 @@ impl ThumbnailWorker {
             return 0;
         }
 
-        let mut ready_updates = Vec::new();
-        let mut failed_updates = Vec::new();
+        let cancel = cancel_token.clone();
 
-        for item in &items {
-            if cancel_token.load(Ordering::Relaxed) {
-                break;
-            }
-
-            let dst_path = cache.resolve_path(&item.file_hash);
-            let rel_path = cache.get_relative_path(&item.file_hash);
-
-            // If thumbnail already exists on disk (e.g. from previous run), mark ready
-            if dst_path.exists() {
-                ready_updates.push((item.id, rel_path));
-                continue;
-            }
-
-            if item.media_type == "photo" || item.media_type == "raw" {
-                match ThumbnailResizer::generate_photo_thumbnail(&item.file_path, &dst_path) {
-                    Ok(_) => ready_updates.push((item.id, rel_path)),
-                    Err(_) => failed_updates.push(item.id),
+        // High-performance parallel thumbnail generation across Rayon CPU pool
+        let results: Vec<(i64, Option<String>)> = items
+            .into_par_iter()
+            .map(|item| {
+                if cancel.load(Ordering::Relaxed) {
+                    return (item.id, None);
                 }
-            } else if item.media_type == "video" {
-                match super::video_extractor::VideoKeyframeExtractor::extract_keyframe(&item.file_path, &dst_path, None) {
-                    Ok(_) => ready_updates.push((item.id, rel_path)),
-                    Err(_) => failed_updates.push(item.id),
-                }
-            } else {
-                ready_updates.push((item.id, rel_path));
-            }
-        }
 
-        // Batch update database in a single transaction
+                let dst_path = cache.resolve_path(&item.file_hash);
+                let rel_path = cache.get_relative_path(&item.file_hash);
+
+                // If thumbnail already exists on disk (e.g. from previous run or deduplication), mark ready
+                if dst_path.exists() {
+                    return (item.id, Some(rel_path));
+                }
+
+                if item.media_type == "photo" || item.media_type == "raw" {
+                    match ThumbnailResizer::generate_photo_thumbnail(&item.file_path, &dst_path) {
+                        Ok(_) => (item.id, Some(rel_path)),
+                        Err(_) => (item.id, None),
+                    }
+                } else if item.media_type == "video" {
+                    match super::video_extractor::VideoKeyframeExtractor::extract_keyframe(&item.file_path, &dst_path, None) {
+                        Ok(_) => (item.id, Some(rel_path)),
+                        Err(_) => (item.id, None),
+                    }
+                } else {
+                    (item.id, Some(rel_path))
+                }
+            })
+            .collect();
+
+        let total_count = results.len();
+
+        // Batch update database in a single fast transaction
         if let Ok(tx) = conn.transaction() {
             {
                 let mut ready_stmt = tx
@@ -127,24 +137,28 @@ impl ThumbnailWorker {
                     )
                     .unwrap();
 
-                let now = chrono::Utc::now().timestamp_millis();
-                for (id, path) in ready_updates {
-                    let _ = ready_stmt.execute(params![path, now, id]);
-                }
-
                 let mut failed_stmt = tx
                     .prepare_cached(
                         "UPDATE media_files SET thumbnail_status = 'failed', updated_at = ?1 WHERE id = ?2;",
                     )
                     .unwrap();
 
-                for id in failed_updates {
-                    let _ = failed_stmt.execute(params![now, id]);
+                let now = chrono::Utc::now().timestamp_millis();
+                for (id, res) in results {
+                    match res {
+                        Some(path) => {
+                            let _ = ready_stmt.execute(params![path, now, id]);
+                        }
+                        None => {
+                            let _ = failed_stmt.execute(params![now, id]);
+                        }
+                    }
                 }
             }
             let _ = tx.commit();
         }
 
-        items.len()
+        total_count
     }
 }
+

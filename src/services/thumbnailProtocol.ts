@@ -6,9 +6,9 @@ export function getThumbnailUrl(fileHash: string, mediaType: string = 'photo'): 
     // macOS/Linux handle them via <scheme>://localhost/
     const isWindows = typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows');
     if (isWindows) {
-      return `http://puntano-thumb.localhost/${fileHash}.webp`;
+      return `http://puntano-thumb.localhost/${fileHash}.jpg`;
     }
-    return `puntano-thumb://localhost/${fileHash}.webp`;
+    return `puntano-thumb://localhost/${fileHash}.jpg`;
   }
 
   // Elegant gradient placeholder for browser development

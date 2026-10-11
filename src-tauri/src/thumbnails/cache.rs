@@ -29,17 +29,30 @@ impl ThumbnailCache {
             let _ = fs::create_dir_all(&bucket_dir);
         }
 
-        bucket_dir.join(format!("{}.webp", file_hash))
+        // Prefer existing .jpg or .webp if already present on disk
+        let jpg_path = bucket_dir.join(format!("{}.jpg", file_hash));
+        if jpg_path.exists() {
+            return jpg_path;
+        }
+
+        let webp_path = bucket_dir.join(format!("{}.webp", file_hash));
+        if webp_path.exists() {
+            return webp_path;
+        }
+
+        jpg_path
     }
 
-    /// Returns the relative path for database storage (e.g. `thumbnails/a1/a1b2c3d4.webp`)
+    /// Returns the relative path for database storage (e.g. `thumbnails/a1/a1b2c3d4.jpg`)
     pub fn get_relative_path(&self, file_hash: &str) -> String {
+        let path = self.resolve_path(file_hash);
+        let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("jpg");
         let prefix = if file_hash.len() >= 2 {
             &file_hash[0..2]
         } else {
             "00"
         };
-        format!("thumbnails/{}/{}.webp", prefix, file_hash)
+        format!("thumbnails/{}/{}.{}", prefix, file_hash, ext)
     }
 
     /// Checks if a thumbnail is already generated on disk
@@ -63,13 +76,13 @@ mod tests {
 
         let path = cache.resolve_path("a1b2c3d4e5f6");
         assert!(path.to_string_lossy().contains("a1"));
-        assert!(path.to_string_lossy().ends_with("a1b2c3d4e5f6.webp"));
+        assert!(path.to_string_lossy().ends_with("a1b2c3d4e5f6.jpg"));
 
         let rel = cache.get_relative_path("a1b2c3d4e5f6");
-        assert_eq!(rel, "thumbnails/a1/a1b2c3d4e5f6.webp");
+        assert_eq!(rel, "thumbnails/a1/a1b2c3d4e5f6.jpg");
 
         let short_rel = cache.get_relative_path("a");
-        assert_eq!(short_rel, "thumbnails/00/a.webp");
+        assert_eq!(short_rel, "thumbnails/00/a.jpg");
 
         let _ = fs::remove_dir_all(&temp_dir);
     }

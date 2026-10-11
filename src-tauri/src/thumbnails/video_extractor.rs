@@ -63,10 +63,8 @@ impl VideoKeyframeExtractor {
                 "1",
                 "-vf",
                 "scale=384:-1",
-                "-c:v",
-                "webp",
                 "-q:v",
-                "80",
+                "3",
                 "-y",
                 &dst_path.as_ref().to_string_lossy(),
             ])
@@ -88,26 +86,21 @@ impl VideoKeyframeExtractor {
     ) -> Result<(), String> {
         use std::fs::File;
         use std::io::BufWriter;
-        use image::{ColorType, ImageBuffer, Rgba};
+        use image::{ColorType, ImageBuffer, Rgb};
 
         let width = 384u32;
         let height = 216u32;
         // Elegant slate color with a subtle center accent
-        let img: ImageBuffer<Rgba<u8>, Vec<u8>> = ImageBuffer::from_pixel(width, height, Rgba([30, 41, 59, 255]));
+        let img: ImageBuffer<Rgb<u8>, Vec<u8>> = ImageBuffer::from_pixel(width, height, Rgb([30, 41, 59]));
 
         let out_file = File::create(dst_path.as_ref())
             .map_err(|e| format!("Failed to create fallback poster: {}", e))?;
         let mut writer = BufWriter::new(out_file);
 
-        let encoder = image::codecs::webp::WebPEncoder::new_lossless(&mut writer);
-        image::ImageEncoder::write_image(
-            encoder,
-            img.as_raw(),
-            width,
-            height,
-            ColorType::Rgba8.into(),
-        )
-        .map_err(|e| format!("Failed to encode fallback WebP: {}", e))?;
+        let mut encoder = image::codecs::jpeg::JpegEncoder::new_with_quality(&mut writer, 82);
+        encoder
+            .encode(img.as_raw(), width, height, ColorType::Rgb8.into())
+            .map_err(|e| format!("Failed to encode fallback JPEG: {}", e))?;
 
         Ok(())
     }
