@@ -1,4 +1,6 @@
-pub const SCHEMA_SQL: &str = r#"
+macro_rules! tables_sql {
+    () => {
+        r#"
 PRAGMA journal_mode = WAL;
 PRAGMA synchronous = NORMAL;
 PRAGMA cache_size = -64000;
@@ -68,30 +70,6 @@ CREATE VIRTUAL TABLE IF NOT EXISTS media_spatial_index USING rtree(
     min_lon, max_lon
 );
 
--- Automated Synchronization Triggers
-CREATE TRIGGER IF NOT EXISTS trg_media_insert_spatial
-AFTER INSERT ON media_files
-WHEN NEW.latitude IS NOT NULL AND NEW.longitude IS NOT NULL
-BEGIN
-    INSERT INTO media_spatial_index (id, min_lat, max_lat, min_lon, max_lon)
-    VALUES (NEW.id, NEW.latitude, NEW.latitude, NEW.longitude, NEW.longitude);
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_media_update_spatial
-AFTER UPDATE OF latitude, longitude ON media_files
-BEGIN
-    DELETE FROM media_spatial_index WHERE id = OLD.id;
-    INSERT INTO media_spatial_index (id, min_lat, max_lat, min_lon, max_lon)
-    SELECT NEW.id, NEW.latitude, NEW.latitude, NEW.longitude, NEW.longitude
-    WHERE NEW.latitude IS NOT NULL AND NEW.longitude IS NOT NULL;
-END;
-
-CREATE TRIGGER IF NOT EXISTS trg_media_delete_spatial
-AFTER DELETE ON media_files
-BEGIN
-    DELETE FROM media_spatial_index WHERE id = OLD.id;
-END;
-
 -- Albums & Collections
 CREATE TABLE IF NOT EXISTS albums (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -120,6 +98,36 @@ CREATE TABLE IF NOT EXISTS media_tags (
     tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
     PRIMARY KEY (media_id, tag_id)
 );
+"#
+    };
+}
+
+macro_rules! indexes_and_triggers_sql {
+    () => {
+        r#"
+-- Automated Synchronization Triggers
+CREATE TRIGGER IF NOT EXISTS trg_media_insert_spatial
+AFTER INSERT ON media_files
+WHEN NEW.latitude IS NOT NULL AND NEW.longitude IS NOT NULL
+BEGIN
+    INSERT INTO media_spatial_index (id, min_lat, max_lat, min_lon, max_lon)
+    VALUES (NEW.id, NEW.latitude, NEW.latitude, NEW.longitude, NEW.longitude);
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_media_update_spatial
+AFTER UPDATE OF latitude, longitude ON media_files
+BEGIN
+    DELETE FROM media_spatial_index WHERE id = OLD.id;
+    INSERT INTO media_spatial_index (id, min_lat, max_lat, min_lon, max_lon)
+    SELECT NEW.id, NEW.latitude, NEW.latitude, NEW.longitude, NEW.longitude
+    WHERE NEW.latitude IS NOT NULL AND NEW.longitude IS NOT NULL;
+END;
+
+CREATE TRIGGER IF NOT EXISTS trg_media_delete_spatial
+AFTER DELETE ON media_files
+BEGIN
+    DELETE FROM media_spatial_index WHERE id = OLD.id;
+END;
 
 -- Indexes
 CREATE INDEX IF NOT EXISTS idx_media_captured_at 
@@ -162,4 +170,11 @@ ON media_tags(media_id);
 
 CREATE INDEX IF NOT EXISTS idx_media_tags_tag 
 ON media_tags(tag_id);
-"#;
+"#
+    };
+}
+
+pub const SCHEMA_TABLES_SQL: &str = tables_sql!();
+pub const SCHEMA_INDEXES_AND_TRIGGERS_SQL: &str = indexes_and_triggers_sql!();
+pub const SCHEMA_SQL: &str = concat!(tables_sql!(), "\n", indexes_and_triggers_sql!());
+
