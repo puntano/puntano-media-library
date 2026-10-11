@@ -174,6 +174,21 @@ pub fn run() {
             commands::media::query_media_paged,
             commands::media::search_media,
             commands::media::get_media_item,
+            commands::media::query_duplicate_groups,
+            commands::media::delete_media_file,
+            commands::media::set_media_favorite,
+            commands::media::set_media_rating,
+            commands::media::create_album,
+            commands::media::get_albums,
+            commands::media::delete_album,
+            commands::media::add_media_to_album,
+            commands::media::remove_media_from_album,
+            commands::media::create_tag,
+            commands::media::get_tags,
+            commands::media::delete_tag,
+            commands::media::add_tag_to_media,
+            commands::media::remove_tag_from_media,
+            commands::media::get_media_tags,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

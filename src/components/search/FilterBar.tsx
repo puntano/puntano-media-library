@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { Search, MapPin, X, RotateCcw, Calendar } from 'lucide-react';
+import { Search, MapPin, X, RotateCcw, Calendar, Heart, Star, Folder, Tag as TagIcon } from 'lucide-react';
 import { useLibraryStore } from '../../stores/libraryStore';
 
 export const FilterBar: React.FC = () => {
@@ -8,6 +8,14 @@ export const FilterBar: React.FC = () => {
     setSearchQuery,
     hasGpsOnly,
     setHasGpsOnly,
+    isFavoriteOnly,
+    setIsFavoriteOnly,
+    minRating,
+    setMinRating,
+    selectedAlbumId,
+    setSelectedAlbumId,
+    selectedTagId,
+    setSelectedTagId,
     dateFrom,
     setDateRange,
     clearFilters,
@@ -25,7 +33,14 @@ export const FilterBar: React.FC = () => {
   }, [localSearch, setSearchQuery]);
 
   const hasActiveFilters =
-    searchQuery.trim().length > 0 || hasGpsOnly || dateFrom !== null || mediaTypeFilter !== 'all';
+    searchQuery.trim().length > 0 ||
+    hasGpsOnly ||
+    isFavoriteOnly ||
+    minRating > 0 ||
+    selectedAlbumId !== null ||
+    selectedTagId !== null ||
+    dateFrom !== null ||
+    mediaTypeFilter !== 'all';
 
   const handleDatePreset = (preset: 'all' | '30days' | 'this_year' | 'last_year') => {
     const now = Date.now();
@@ -44,6 +59,14 @@ export const FilterBar: React.FC = () => {
     }
   };
 
+  const handleCycleRating = () => {
+    // Cycle: 0 (all) -> 3+ -> 4+ -> 5 -> 0
+    if (minRating === 0) setMinRating(3);
+    else if (minRating === 3) setMinRating(4);
+    else if (minRating === 4) setMinRating(5);
+    else setMinRating(0);
+  };
+
   return (
     <div
       className="glass-panel"
@@ -59,7 +82,7 @@ export const FilterBar: React.FC = () => {
       }}
     >
       {/* Search Input */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, maxWidth: 420, position: 'relative' }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 10, flex: 1, maxWidth: 380, position: 'relative' }}>
         <Search size={15} color="var(--text-muted)" style={{ position: 'absolute', left: 12 }} />
         <input
           type="text"
@@ -102,7 +125,75 @@ export const FilterBar: React.FC = () => {
       </div>
 
       {/* Date & Filter Badges */}
-      <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
+        {/* Active Album Badge */}
+        {selectedAlbumId !== null && (
+          <div
+            style={{
+              padding: '4px 8px 4px 10px',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'rgba(59, 130, 246, 0.15)',
+              border: '1px solid rgba(59, 130, 246, 0.35)',
+              color: 'var(--accent-primary)',
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            <Folder size={12} />
+            <span>Album #{selectedAlbumId}</span>
+            <button
+              onClick={() => setSelectedAlbumId(null)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--accent-primary)',
+                cursor: 'pointer',
+                padding: 1,
+                display: 'flex',
+              }}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+
+        {/* Active Tag Badge */}
+        {selectedTagId !== null && (
+          <div
+            style={{
+              padding: '4px 8px 4px 10px',
+              borderRadius: 'var(--radius-sm)',
+              backgroundColor: 'rgba(16, 185, 129, 0.15)',
+              border: '1px solid rgba(16, 185, 129, 0.35)',
+              color: 'var(--status-success)',
+              fontSize: '0.72rem',
+              fontWeight: 600,
+              display: 'flex',
+              alignItems: 'center',
+              gap: 6,
+            }}
+          >
+            <TagIcon size={12} />
+            <span>Tag #{selectedTagId}</span>
+            <button
+              onClick={() => setSelectedTagId(null)}
+              style={{
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--status-success)',
+                cursor: 'pointer',
+                padding: 1,
+                display: 'flex',
+              }}
+            >
+              <X size={12} />
+            </button>
+          </div>
+        )}
+
         {/* Date presets */}
         <div style={{ display: 'flex', gap: 4, alignItems: 'center' }}>
           <Calendar size={14} color="var(--text-muted)" style={{ marginRight: 2 }} />
@@ -138,6 +229,52 @@ export const FilterBar: React.FC = () => {
           </button>
         </div>
 
+        {/* Favorites Only Toggle */}
+        <button
+          onClick={() => setIsFavoriteOnly(!isFavoriteOnly)}
+          title="Toggle favorites filter"
+          style={{
+            padding: '5px 10px',
+            borderRadius: 'var(--radius-sm)',
+            border: isFavoriteOnly ? '1px solid #f87171' : '1px solid var(--surface-glass-border)',
+            cursor: 'pointer',
+            fontSize: '0.72rem',
+            fontWeight: 600,
+            backgroundColor: isFavoriteOnly ? 'rgba(239, 68, 68, 0.2)' : 'transparent',
+            color: isFavoriteOnly ? '#f87171' : 'var(--text-secondary)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <Heart size={13} fill={isFavoriteOnly ? '#f87171' : 'none'} />
+          Favorites
+        </button>
+
+        {/* Minimum Star Rating Filter */}
+        <button
+          onClick={handleCycleRating}
+          title="Filter by minimum star rating (click to cycle)"
+          style={{
+            padding: '5px 10px',
+            borderRadius: 'var(--radius-sm)',
+            border: minRating > 0 ? '1px solid #fbbf24' : '1px solid var(--surface-glass-border)',
+            cursor: 'pointer',
+            fontSize: '0.72rem',
+            fontWeight: 600,
+            backgroundColor: minRating > 0 ? 'rgba(251, 191, 36, 0.15)' : 'transparent',
+            color: minRating > 0 ? '#fbbf24' : 'var(--text-secondary)',
+            display: 'flex',
+            alignItems: 'center',
+            gap: 5,
+            transition: 'all 0.15s ease',
+          }}
+        >
+          <Star size={13} fill={minRating > 0 ? '#fbbf24' : 'none'} />
+          {minRating === 0 ? 'Rating: Any' : `${minRating}+ Stars`}
+        </button>
+
         {/* GPS Toggle */}
         <button
           onClick={() => setHasGpsOnly(!hasGpsOnly)}
@@ -157,7 +294,7 @@ export const FilterBar: React.FC = () => {
           }}
         >
           <MapPin size={13} />
-          Geotagged Only
+          Geotagged
         </button>
 
         {/* Clear Filters */}
@@ -189,3 +326,4 @@ export const FilterBar: React.FC = () => {
     </div>
   );
 };
+

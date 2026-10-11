@@ -1,4 +1,4 @@
-import React, { useEffect } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   X,
   FolderOpen,
@@ -8,14 +8,34 @@ import {
   HardDrive,
   ExternalLink,
   Info,
+  Heart,
+  Star,
+  FolderPlus,
+  Tag as TagIcon,
+  Plus,
 } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useLibraryStore } from '../../stores/libraryStore';
 import { tauriApi } from '../../services/tauriApi';
+import { Tag } from '../../types/media';
 import { MediaThumbnail } from '../common/MediaThumbnail';
+import { AddToAlbumModal } from '../albums/AddToAlbumModal';
 
 export const MetadataDrawer: React.FC = () => {
-  const { selectedItem, isInspectorOpen, setInspectorOpen, setSelectedItem, setActiveView } = useLibraryStore();
+  const {
+    selectedItem,
+    isInspectorOpen,
+    setInspectorOpen,
+    setSelectedItem,
+    setActiveView,
+    incrementSyncRevision,
+  } = useLibraryStore();
+
+  const [hoverRating, setHoverRating] = useState<number | null>(null);
+  const [showAddToAlbum, setShowAddToAlbum] = useState<boolean>(false);
+  const [tags, setTags] = useState<Tag[]>([]);
+  const [newTagInput, setNewTagInput] = useState<string>('');
+  const [isAddingTag, setIsAddingTag] = useState<boolean>(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -26,6 +46,18 @@ export const MetadataDrawer: React.FC = () => {
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isInspectorOpen, setInspectorOpen]);
+
+  // Load tags for current item
+  useEffect(() => {
+    if (selectedItem?.id) {
+      tauriApi
+        .getMediaTags(selectedItem.id)
+        .then(setTags)
+        .catch((err) => console.error('Failed to load item tags:', err));
+    } else {
+      setTags([]);
+    }
+  }, [selectedItem?.id]);
 
   if (!isInspectorOpen || !selectedItem) return null;
 
@@ -41,6 +73,59 @@ export const MetadataDrawer: React.FC = () => {
   const handleRevealInExplorer = () => {
     if (selectedItem?.file_path) {
       tauriApi.showInFolder(selectedItem.file_path);
+    }
+  };
+
+  const handleToggleFavorite = async () => {
+    const nextFavorite = !selectedItem.is_favorite;
+    setSelectedItem({ ...selectedItem, is_favorite: nextFavorite });
+    try {
+      await tauriApi.setMediaFavorite(selectedItem.id, nextFavorite);
+      incrementSyncRevision();
+    } catch (err) {
+      console.error('Failed to toggle favorite:', err);
+      setSelectedItem({ ...selectedItem, is_favorite: selectedItem.is_favorite });
+    }
+  };
+
+  const handleSetRating = async (ratingVal: number) => {
+    const newRating = selectedItem.rating === ratingVal ? 0 : ratingVal;
+    setSelectedItem({ ...selectedItem, rating: newRating });
+    try {
+      await tauriApi.setMediaRating(selectedItem.id, newRating);
+      incrementSyncRevision();
+    } catch (err) {
+      console.error('Failed to set rating:', err);
+      setSelectedItem({ ...selectedItem, rating: selectedItem.rating });
+    }
+  };
+
+  const handleAddTag = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const tagName = newTagInput.trim();
+    if (!tagName || isAddingTag) return;
+
+    setIsAddingTag(true);
+    try {
+      const tag = await tauriApi.createTag(tagName);
+      await tauriApi.addTagToMedia(selectedItem.id, tag.id);
+      setTags((prev) => (prev.some((t) => t.id === tag.id) ? prev : [...prev, tag]));
+      setNewTagInput('');
+      incrementSyncRevision();
+    } catch (err) {
+      console.error('Failed to add tag:', err);
+    } finally {
+      setIsAddingTag(false);
+    }
+  };
+
+  const handleRemoveTag = async (tagId: number) => {
+    try {
+      await tauriApi.removeTagFromMedia(selectedItem.id, tagId);
+      setTags((prev) => prev.filter((t) => t.id !== tagId));
+      incrementSyncRevision();
+    } catch (err) {
+      console.error('Failed to remove tag:', err);
     }
   };
 
@@ -97,7 +182,7 @@ export const MetadataDrawer: React.FC = () => {
               justifyContent: 'center',
               position: 'relative',
               backgroundColor: 'rgba(0, 0, 0, 0.4)',
-              marginBottom: 24,
+              marginBottom: 18,
             }}
           >
             {selectedItem.media_type === 'video' ? (
@@ -130,6 +215,182 @@ export const MetadataDrawer: React.FC = () => {
               }}
             >
               {selectedItem.media_type.toUpperCase()}
+            </div>
+          </div>
+
+          {/* Quick Curation & Organization Panel */}
+          <div
+            className="glass-panel"
+            style={{
+              padding: '14px 16px',
+              borderRadius: 'var(--radius-md)',
+              marginBottom: 24,
+              display: 'flex',
+              flexDirection: 'column',
+              gap: 12,
+              backgroundColor: 'rgba(255, 255, 255, 0.02)',
+            }}
+          >
+            {/* Top row: Favorite & Add to Album */}
+            <div style={{ display: 'flex', gap: 8 }}>
+              <button
+                onClick={handleToggleFavorite}
+                style={{
+                  flex: 1,
+                  padding: '7px 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: selectedItem.is_favorite ? '1px solid #f87171' : '1px solid var(--surface-glass-border)',
+                  backgroundColor: selectedItem.is_favorite ? 'rgba(239, 68, 68, 0.2)' : 'var(--bg-secondary)',
+                  color: selectedItem.is_favorite ? '#f87171' : 'var(--text-secondary)',
+                  fontWeight: 600,
+                  fontSize: '0.8rem',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  cursor: 'pointer',
+                  transition: 'all 0.15s ease',
+                }}
+              >
+                <Heart size={15} fill={selectedItem.is_favorite ? '#f87171' : 'none'} />
+                {selectedItem.is_favorite ? 'Favorited' : 'Favorite'}
+              </button>
+
+              <button
+                onClick={() => setShowAddToAlbum(true)}
+                className="btn-secondary"
+                style={{
+                  flex: 1,
+                  padding: '7px 12px',
+                  fontSize: '0.8rem',
+                  gap: 6,
+                  justifyContent: 'center',
+                }}
+              >
+                <FolderPlus size={15} color="var(--accent-primary)" />
+                Add to Album
+              </button>
+            </div>
+
+            {/* Middle row: 5-Star Rating */}
+            <div
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                padding: '6px 10px',
+                borderRadius: 'var(--radius-sm)',
+                backgroundColor: 'rgba(0, 0, 0, 0.2)',
+              }}
+            >
+              <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600 }}>
+                Star Rating
+              </span>
+              <div style={{ display: 'flex', gap: 4 }}>
+                {[1, 2, 3, 4, 5].map((star) => {
+                  const activeRating = hoverRating !== null ? hoverRating : selectedItem.rating;
+                  const isFilled = star <= activeRating;
+                  return (
+                    <button
+                      key={star}
+                      onClick={() => handleSetRating(star)}
+                      onMouseEnter={() => setHoverRating(star)}
+                      onMouseLeave={() => setHoverRating(null)}
+                      title={`Rate ${star} star${star > 1 ? 's' : ''}`}
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        cursor: 'pointer',
+                        padding: 3,
+                        display: 'flex',
+                        alignItems: 'center',
+                        justifyContent: 'center',
+                        color: isFilled ? '#fbbf24' : 'var(--text-muted)',
+                        transition: 'transform 0.1s ease',
+                      }}
+                    >
+                      <Star size={18} fill={isFilled ? '#fbbf24' : 'none'} />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
+
+            {/* Bottom: Tags */}
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                  <TagIcon size={12} />
+                  Tags & Labels
+                </span>
+                <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                  {tags.length} tags
+                </span>
+              </div>
+
+              {/* Tag Badges */}
+              <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                {tags.map((tag) => (
+                  <span
+                    key={tag.id}
+                    style={{
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 4,
+                      padding: '3px 8px',
+                      borderRadius: 12,
+                      backgroundColor: 'rgba(59, 130, 246, 0.15)',
+                      color: 'var(--accent-primary)',
+                      fontSize: '0.72rem',
+                      fontWeight: 600,
+                    }}
+                  >
+                    #{tag.name}
+                    <button
+                      onClick={() => handleRemoveTag(tag.id)}
+                      title="Remove tag"
+                      style={{
+                        background: 'transparent',
+                        border: 'none',
+                        color: 'var(--accent-primary)',
+                        cursor: 'pointer',
+                        padding: 0,
+                        display: 'flex',
+                      }}
+                    >
+                      <X size={11} />
+                    </button>
+                  </span>
+                ))}
+              </div>
+
+              {/* Add Tag Input */}
+              <form onSubmit={handleAddTag} style={{ display: 'flex', gap: 6, marginTop: 2 }}>
+                <input
+                  type="text"
+                  value={newTagInput}
+                  onChange={(e) => setNewTagInput(e.target.value)}
+                  placeholder="Add a new tag..."
+                  style={{
+                    flex: 1,
+                    padding: '5px 10px',
+                    backgroundColor: 'var(--bg-secondary)',
+                    border: '1px solid var(--surface-glass-border)',
+                    borderRadius: 'var(--radius-sm)',
+                    color: 'var(--text-primary)',
+                    fontSize: '0.75rem',
+                    outline: 'none',
+                  }}
+                />
+                <button
+                  type="submit"
+                  disabled={!newTagInput.trim() || isAddingTag}
+                  className="btn-primary"
+                  style={{ padding: '5px 10px', fontSize: '0.75rem' }}
+                >
+                  <Plus size={13} />
+                </button>
+              </form>
             </div>
           </div>
 
@@ -307,6 +568,15 @@ export const MetadataDrawer: React.FC = () => {
           )}
         </div>
       </aside>
+
+      {/* Add To Album Modal */}
+      {showAddToAlbum && (
+        <AddToAlbumModal
+          item={selectedItem}
+          onClose={() => setShowAddToAlbum(false)}
+        />
+      )}
     </>
   );
 };
+

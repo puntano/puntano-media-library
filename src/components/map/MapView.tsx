@@ -285,6 +285,8 @@ export const MapView: React.FC = () => {
       captured_at: point.captured_at,
       latitude: point.latitude,
       longitude: point.longitude,
+      is_favorite: false,
+      rating: 0,
       thumbnail_status: 'ready',
       indexed_at: Date.now(),
       updated_at: Date.now(),

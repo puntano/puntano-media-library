@@ -1,6 +1,15 @@
 import { invoke } from '@tauri-apps/api/core';
 import { listen, UnlistenFn } from '@tauri-apps/api/event';
-import { MediaItem, SpatialClusterPoint, TimelineGroup, IndexingProgressEvent, LibraryInfo } from '../types/media';
+import {
+  MediaItem,
+  SpatialClusterPoint,
+  TimelineGroup,
+  IndexingProgressEvent,
+  LibraryInfo,
+  DuplicateGroup,
+  Album,
+  Tag,
+} from '../types/media';
 
 // Check if running inside native Tauri runtime
 export const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
@@ -125,6 +134,8 @@ export const tauriApi = {
         media_type: 'photo',
         orientation: 1,
         captured_at: Date.now() - (offset + i) * 86400000,
+        is_favorite: false,
+        rating: 0,
         thumbnail_status: 'ready',
         indexed_at: Date.now(),
         updated_at: Date.now(),
@@ -149,6 +160,8 @@ export const tauriApi = {
         media_type: (query.media_type === 'video' ? 'video' : 'photo') as any,
         orientation: 1,
         captured_at: Date.now() - i * 86400000,
+        is_favorite: query.is_favorite_only || false,
+        rating: query.min_rating || 0,
         thumbnail_status: 'ready',
         camera_make: query.camera_make || 'Sony',
         camera_model: 'A7 IV',
@@ -175,6 +188,8 @@ export const tauriApi = {
         orientation: 1,
         captured_at: Date.now() - 86400000,
         thumbnail_status: 'ready',
+        is_favorite: false,
+        rating: 0,
         camera_make: 'Sony',
         camera_model: 'ILCE-7M4',
         lens_model: 'FE 24-70mm F2.8 GM II',
@@ -187,6 +202,181 @@ export const tauriApi = {
       };
     }
     return await invoke<MediaItem | null>('get_media_item', { id });
+  },
+
+  // Duplicates Management
+  async queryDuplicateGroups(): Promise<DuplicateGroup[]> {
+    if (!isTauri()) {
+      return [
+        {
+          file_hash: 'mock_dupe_hash_1',
+          count: 2,
+          total_size_bytes: 8400000,
+          items: [
+            {
+              id: 101,
+              library_id: 1,
+              file_path: 'C:\\Users\\User\\Pictures\\Camera\\DSC001.JPG',
+              directory: 'C:\\Users\\User\\Pictures\\Camera',
+              file_name: 'DSC001.JPG',
+              file_size: 4200000,
+              file_modified_at: Date.now() - 5000000,
+              file_hash: 'mock_dupe_hash_1',
+              mime_type: 'image/jpeg',
+              media_type: 'photo',
+              orientation: 1,
+              captured_at: Date.now() - 5000000,
+              thumbnail_status: 'ready',
+              is_favorite: false,
+              rating: 0,
+              indexed_at: Date.now(),
+              updated_at: Date.now(),
+            },
+            {
+              id: 102,
+              library_id: 1,
+              file_path: 'D:\\Backup\\Exports\\DSC001_copy.JPG',
+              directory: 'D:\\Backup\\Exports',
+              file_name: 'DSC001_copy.JPG',
+              file_size: 4200000,
+              file_modified_at: Date.now() - 5000000,
+              file_hash: 'mock_dupe_hash_1',
+              mime_type: 'image/jpeg',
+              media_type: 'photo',
+              orientation: 1,
+              captured_at: Date.now() - 5000000,
+              thumbnail_status: 'ready',
+              is_favorite: false,
+              rating: 0,
+              indexed_at: Date.now(),
+              updated_at: Date.now(),
+            },
+          ],
+        },
+      ];
+    }
+    return await invoke<DuplicateGroup[]>('query_duplicate_groups');
+  },
+
+  async deleteMediaFile(id: number, deleteFromDisk: boolean = false): Promise<string | null> {
+    if (!isTauri()) {
+      console.warn('[Mock] deleteMediaFile:', id, deleteFromDisk);
+      return '/mock/deleted/file.jpg';
+    }
+    return await invoke<string | null>('delete_media_file', { id, deleteFromDisk });
+  },
+
+  // Curation: Favorites & Ratings
+  async setMediaFavorite(id: number, isFavorite: boolean): Promise<void> {
+    if (!isTauri()) {
+      console.warn('[Mock] setMediaFavorite:', id, isFavorite);
+      return;
+    }
+    await invoke('set_media_favorite', { id, isFavorite });
+  },
+
+  async setMediaRating(id: number, rating: number): Promise<void> {
+    if (!isTauri()) {
+      console.warn('[Mock] setMediaRating:', id, rating);
+      return;
+    }
+    await invoke('set_media_rating', { id, rating });
+  },
+
+  // Albums & Collections
+  async createAlbum(name: string, description?: string): Promise<Album> {
+    if (!isTauri()) {
+      return {
+        id: Date.now(),
+        name,
+        description,
+        media_count: 0,
+        created_at: Date.now(),
+      };
+    }
+    return await invoke<Album>('create_album', { name, description });
+  },
+
+  async getAlbums(): Promise<Album[]> {
+    if (!isTauri()) {
+      return [
+        {
+          id: 1,
+          name: 'Summer Trip 2026',
+          description: 'Highlights from the coast',
+          cover_file_path: '/photos/sf.jpg',
+          cover_file_hash: 'mock_sf',
+          media_count: 24,
+          created_at: Date.now() - 86400000 * 5,
+        },
+        {
+          id: 2,
+          name: 'Architecture & Cityscapes',
+          description: 'Urban photography portfolio',
+          cover_file_path: '/photos/nyc.jpg',
+          cover_file_hash: 'mock_nyc',
+          media_count: 58,
+          created_at: Date.now() - 86400000 * 12,
+        },
+      ];
+    }
+    return await invoke<Album[]>('get_albums');
+  },
+
+  async deleteAlbum(id: number): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('delete_album', { id });
+  },
+
+  async addMediaToAlbum(albumId: number, mediaIds: number[]): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('add_media_to_album', { albumId, mediaIds });
+  },
+
+  async removeMediaFromAlbum(albumId: number, mediaIds: number[]): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('remove_media_from_album', { albumId, mediaIds });
+  },
+
+  // Tags
+  async createTag(name: string, color?: string): Promise<Tag> {
+    if (!isTauri()) {
+      return { id: Date.now(), name, color: color || '#3b82f6', media_count: 0 };
+    }
+    return await invoke<Tag>('create_tag', { name, color });
+  },
+
+  async getTags(): Promise<Tag[]> {
+    if (!isTauri()) {
+      return [
+        { id: 1, name: 'Landscape', color: '#10b981', media_count: 142 },
+        { id: 2, name: 'Portrait', color: '#f59e0b', media_count: 85 },
+        { id: 3, name: 'Travel', color: '#6366f1', media_count: 310 },
+      ];
+    }
+    return await invoke<Tag[]>('get_tags');
+  },
+
+  async deleteTag(id: number): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('delete_tag', { id });
+  },
+
+  async addTagToMedia(mediaId: number, tagId: number): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('add_tag_to_media', { mediaId, tagId });
+  },
+
+  async removeTagFromMedia(mediaId: number, tagId: number): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('remove_tag_from_media', { mediaId, tagId });
+  },
+
+  async getMediaTags(mediaId: number): Promise<Tag[]> {
+    if (!isTauri()) {
+      return [{ id: 1, name: 'Landscape', color: '#10b981', media_count: 1 }];
+    }
+    return await invoke<Tag[]>('get_media_tags', { mediaId });
   },
 
   onIndexingProgress(callback: (event: IndexingProgressEvent) => void): Promise<UnlistenFn> {

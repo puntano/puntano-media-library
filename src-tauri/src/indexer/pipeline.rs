@@ -148,6 +148,8 @@ impl IndexingPipeline {
                     exposure_time: None,
                     thumbnail_path: None,
                     thumbnail_status: "pending".into(),
+                    is_favorite: false,
+                    rating: 0,
                     indexed_at: now,
                     updated_at: now,
                 };

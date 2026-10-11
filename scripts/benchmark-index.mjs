@@ -333,6 +333,61 @@ function runIndexingBenchmark() {
   `).get(new Date('2025-01-01').getTime());
   console.log(`  ✓ Multi-Criteria Filter Query (Date >= 2025 + Photo + Geotagged + SF area): ${searchQuery.match_count} matches.`);
 
+  // Test 6: Duplicates Detection Query
+  // Insert a duplicate item sharing the same hash as item 1
+  const firstItem = db.prepare('SELECT id, file_hash, file_size FROM media_files LIMIT 1;').get();
+  db.prepare(`
+    INSERT INTO media_files (
+      library_id, file_path, directory, file_name, file_size, file_modified_at,
+      file_hash, mime_type, media_type, orientation, thumbnail_status, indexed_at, updated_at
+    ) VALUES (
+      1, '/fake/duplicate/copy.jpg', '/fake/duplicate', 'copy.jpg', ?, ?,
+      ?, 'image/jpeg', 'photo', 1, 'ready', ?, ?
+    );
+  `).run(firstItem.file_size, Date.now(), firstItem.file_hash, Date.now(), Date.now());
+
+  const dupeClusters = db.prepare(`
+    SELECT file_hash, count(*) as cnt, sum(file_size) as total_size
+    FROM media_files
+    GROUP BY file_hash
+    HAVING count(*) > 1;
+  `).all();
+  if (dupeClusters.length !== 1 || dupeClusters[0].cnt !== 2) {
+    throw new Error('Duplicate detection query failed to identify duplicate cluster');
+  }
+  console.log(`  ✓ Duplicates Query: detected duplicate cluster with hash ${dupeClusters[0].file_hash} (2 copies).`);
+
+  // Test 7: Favorites & Star Ratings Curation Query
+  db.prepare('UPDATE media_files SET is_favorite = 1, rating = 5 WHERE id = ?;').run(firstItem.id);
+  const favCheck = db.prepare('SELECT count(*) as cnt FROM media_files WHERE is_favorite = 1 AND rating = 5;').get();
+  if (favCheck.cnt !== 1) {
+    throw new Error('Favorites & rating query verification failed');
+  }
+  console.log(`  ✓ Favorites & Ratings Query: verified 1 item marked as favorite with 5 stars.`);
+
+  // Test 8: Albums Creation & Media Association
+  db.prepare(`
+    INSERT INTO albums (name, description, cover_media_id, created_at)
+    VALUES ('Vacation Highlights', 'Best shots', ?, ?);
+  `).run(firstItem.id, Date.now());
+  const albumRow = db.prepare("SELECT id FROM albums WHERE name = 'Vacation Highlights';").get();
+  db.prepare('INSERT INTO album_media (album_id, media_id, added_at) VALUES (?, ?, ?);').run(albumRow.id, firstItem.id, Date.now());
+  const albumMediaCount = db.prepare('SELECT count(*) as cnt FROM album_media WHERE album_id = ?;').get(albumRow.id);
+  if (albumMediaCount.cnt !== 1) {
+    throw new Error('Album media association failed');
+  }
+  console.log(`  ✓ Albums & Collections: created album 'Vacation Highlights' with linked media item.`);
+
+  // Test 9: Tags Creation & Association
+  db.prepare("INSERT INTO tags (name, color) VALUES ('Travel', '#10b981');").run();
+  const tagRow = db.prepare("SELECT id FROM tags WHERE name = 'Travel';").get();
+  db.prepare('INSERT INTO media_tags (media_id, tag_id) VALUES (?, ?);').run(firstItem.id, tagRow.id);
+  const tagMediaCount = db.prepare('SELECT count(*) as cnt FROM media_tags WHERE tag_id = ?;').get(tagRow.id);
+  if (tagMediaCount.cnt !== 1) {
+    throw new Error('Tag media association failed');
+  }
+  console.log(`  ✓ Tags System: tagged media item with 'Travel' tag.`);
+
   // Cleanup with Windows retry handling for antivirus/indexer file locks
   db.close();
   const rmOpts = { recursive: true, force: true, maxRetries: 10, retryDelay: 100 };

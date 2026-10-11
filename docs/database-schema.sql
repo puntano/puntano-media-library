@@ -79,7 +79,11 @@ CREATE TABLE IF NOT EXISTS media_files (
     thumbnail_status TEXT NOT NULL DEFAULT 'pending', -- 'pending' | 'ready' | 'failed' | 'skipped'
     
     indexed_at INTEGER NOT NULL,                -- Epoch ms
-    updated_at INTEGER NOT NULL                 -- Epoch ms
+    updated_at INTEGER NOT NULL,                -- Epoch ms
+
+    -- User Curation: Favorites & Star Ratings
+    is_favorite INTEGER NOT NULL DEFAULT 0,     -- 0 or 1
+    rating INTEGER NOT NULL DEFAULT 0           -- 0 to 5 stars
 );
 
 -- ------------------------------------------------------------------------------
@@ -122,7 +126,40 @@ BEGIN
 END;
 
 -- ------------------------------------------------------------------------------
--- 6. Performance B-Tree Indexes
+-- 6. Albums & Collections
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS albums (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    description TEXT,
+    cover_media_id INTEGER REFERENCES media_files(id) ON DELETE SET NULL,
+    created_at INTEGER NOT NULL
+);
+
+CREATE TABLE IF NOT EXISTS album_media (
+    album_id INTEGER NOT NULL REFERENCES albums(id) ON DELETE CASCADE,
+    media_id INTEGER NOT NULL REFERENCES media_files(id) ON DELETE CASCADE,
+    added_at INTEGER NOT NULL,
+    PRIMARY KEY (album_id, media_id)
+);
+
+-- ------------------------------------------------------------------------------
+-- 7. Media Tags
+-- ------------------------------------------------------------------------------
+CREATE TABLE IF NOT EXISTS tags (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT NOT NULL UNIQUE,
+    color TEXT NOT NULL DEFAULT '#3b82f6'
+);
+
+CREATE TABLE IF NOT EXISTS media_tags (
+    media_id INTEGER NOT NULL REFERENCES media_files(id) ON DELETE CASCADE,
+    tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
+    PRIMARY KEY (media_id, tag_id)
+);
+
+-- ------------------------------------------------------------------------------
+-- 8. Performance B-Tree Indexes
 -- ------------------------------------------------------------------------------
 
 -- Fast Chronological Queries (Timeline View)
@@ -151,3 +188,24 @@ WHERE geohash IS NOT NULL;
 -- Directory grouping index
 CREATE INDEX IF NOT EXISTS idx_media_directory
 ON media_files(directory);
+
+-- User Curation Indexes
+CREATE INDEX IF NOT EXISTS idx_media_favorite 
+ON media_files(is_favorite) 
+WHERE is_favorite = 1;
+
+CREATE INDEX IF NOT EXISTS idx_media_rating 
+ON media_files(rating) 
+WHERE rating > 0;
+
+CREATE INDEX IF NOT EXISTS idx_album_media_album 
+ON album_media(album_id);
+
+CREATE INDEX IF NOT EXISTS idx_album_media_media 
+ON album_media(media_id);
+
+CREATE INDEX IF NOT EXISTS idx_media_tags_media 
+ON media_tags(media_id);
+
+CREATE INDEX IF NOT EXISTS idx_media_tags_tag 
+ON media_tags(tag_id);

@@ -3,21 +3,25 @@ import {
   Map as MapIcon,
   Calendar as CalendarIcon,
   Grid3X3,
+  FolderHeart,
   Image as ImageIcon,
   Film,
   Plus,
   Settings,
+  Copy,
 } from 'lucide-react';
 import { useLibraryStore } from './stores/libraryStore';
 import { tauriApi } from './services/tauriApi';
 import { MapView } from './components/map/MapView';
 import { TimelineView } from './components/timeline/TimelineView';
 import { VirtualGallery } from './components/gallery/VirtualGallery';
+import { AlbumsView } from './components/albums/AlbumsView';
 import { IndexingPanel } from './components/indexing/IndexingPanel';
 import { MetadataDrawer } from './components/inspector/MetadataDrawer';
 import { FilterBar } from './components/search/FilterBar';
 import { LightboxModal } from './components/viewer/LightboxModal';
 import { LibrarySettingsModal } from './components/settings/LibrarySettingsModal';
+import { DuplicatesModal } from './components/duplicates/DuplicatesModal';
 
 export const App: React.FC = () => {
   const {
@@ -28,6 +32,8 @@ export const App: React.FC = () => {
     totalMediaCount,
     setTotalMediaCount,
     incrementSyncRevision,
+    isDuplicateModalOpen,
+    setDuplicateModalOpen,
   } = useLibraryStore();
   const [showIndexModal, setShowIndexModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -179,6 +185,26 @@ export const App: React.FC = () => {
             <Grid3X3 size={15} />
             Gallery
           </button>
+          <button
+            onClick={() => setActiveView('albums')}
+            style={{
+              padding: '6px 16px',
+              borderRadius: 'var(--radius-sm)',
+              border: 'none',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '0.85rem',
+              backgroundColor: activeView === 'albums' ? 'var(--accent-primary)' : 'transparent',
+              color: activeView === 'albums' ? '#ffffff' : 'var(--text-secondary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <FolderHeart size={15} />
+            Albums
+          </button>
         </div>
 
         {/* Right Action Bar */}
@@ -219,6 +245,16 @@ export const App: React.FC = () => {
             ))}
           </div>
 
+          {/* Duplicates Cleaner Trigger */}
+          <button
+            className="btn-secondary"
+            onClick={() => setDuplicateModalOpen(true)}
+            title="Scan & Clean Duplicate Files"
+            style={{ padding: '8px 10px' }}
+          >
+            <Copy size={16} color="var(--accent-primary)" />
+          </button>
+
           {/* Settings / Library Management */}
           <button
             className="btn-secondary"
@@ -245,7 +281,11 @@ export const App: React.FC = () => {
         {activeView === 'map' && <MapView />}
         {activeView === 'timeline' && <TimelineView />}
         {activeView === 'gallery' && <VirtualGallery />}
+        {activeView === 'albums' && <AlbumsView />}
       </main>
+
+      {/* Duplicates Cleaner Modal */}
+      {isDuplicateModalOpen && <DuplicatesModal />}
 
       {/* Indexing Modal */}
       {showIndexModal && <IndexingPanel onClose={() => setShowIndexModal(false)} />}

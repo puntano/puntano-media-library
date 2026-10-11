@@ -35,8 +35,37 @@ export interface MediaItem {
   thumbnail_path?: string;
   thumbnail_status: 'pending' | 'ready' | 'failed' | 'skipped';
 
+  // User Curation
+  is_favorite: boolean;
+  rating: number; // 0 to 5
+
   indexed_at: number;
   updated_at: number;
+}
+
+export interface DuplicateGroup {
+  file_hash: string;
+  count: number;
+  total_size_bytes: number;
+  items: MediaItem[];
+}
+
+export interface Album {
+  id: number;
+  name: string;
+  description?: string;
+  cover_media_id?: number;
+  cover_file_path?: string;
+  cover_file_hash?: string;
+  media_count: number;
+  created_at: number;
+}
+
+export interface Tag {
+  id: number;
+  name: string;
+  color: string;
+  media_count: number;
 }
 
 export interface SpatialClusterPoint {
@@ -74,6 +103,10 @@ export interface MediaFilterQuery {
   media_type?: 'all' | 'photo' | 'video' | 'raw';
   camera_make?: string;
   has_gps_only?: boolean;
+  is_favorite_only?: boolean;
+  min_rating?: number;
+  album_id?: number;
+  tag_id?: number;
   limit?: number;
   offset?: number;
 }

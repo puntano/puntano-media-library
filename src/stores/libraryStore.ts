@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { IndexingProgressEvent, MediaItem } from '../types/media';
 
 interface LibraryState {
-  activeView: 'map' | 'timeline' | 'gallery';
+  activeView: 'map' | 'timeline' | 'gallery' | 'albums';
   totalMediaCount: number;
   isIndexing: boolean;
   indexingProgress: IndexingProgressEvent | null;
@@ -13,8 +13,15 @@ interface LibraryState {
   // Search & Filter State
   searchQuery: string;
   hasGpsOnly: boolean;
+  isFavoriteOnly: boolean;
+  minRating: number;
+  selectedAlbumId: number | null;
+  selectedTagId: number | null;
   dateFrom: number | null;
   dateTo: number | null;
+
+  // Modals & Panels
+  isDuplicateModalOpen: boolean;
 
   // Fullscreen Lightbox State
   lightboxIndex: number | null;
@@ -23,7 +30,7 @@ interface LibraryState {
   // Reactive Sync Revision (triggers view reloads on background watcher sync)
   syncRevision: number;
 
-  setActiveView: (view: 'map' | 'timeline' | 'gallery') => void;
+  setActiveView: (view: 'map' | 'timeline' | 'gallery' | 'albums') => void;
   setTotalMediaCount: (count: number) => void;
   setIsIndexing: (isIndexing: boolean) => void;
   setIndexingProgress: (progress: IndexingProgressEvent | null) => void;
@@ -34,7 +41,12 @@ interface LibraryState {
 
   setSearchQuery: (query: string) => void;
   setHasGpsOnly: (hasGps: boolean) => void;
+  setIsFavoriteOnly: (isFav: boolean) => void;
+  setMinRating: (rating: number) => void;
+  setSelectedAlbumId: (id: number | null) => void;
+  setSelectedTagId: (id: number | null) => void;
   setDateRange: (from: number | null, to: number | null) => void;
+  setDuplicateModalOpen: (open: boolean) => void;
   clearFilters: () => void;
 
   openLightbox: (items: MediaItem[], index: number) => void;
@@ -55,8 +67,13 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
   searchQuery: '',
   hasGpsOnly: false,
+  isFavoriteOnly: false,
+  minRating: 0,
+  selectedAlbumId: null,
+  selectedTagId: null,
   dateFrom: null,
   dateTo: null,
+  isDuplicateModalOpen: false,
 
   lightboxIndex: null,
   lightboxItems: [],
@@ -72,11 +89,20 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
 
   setSearchQuery: (searchQuery) => set({ searchQuery }),
   setHasGpsOnly: (hasGpsOnly) => set({ hasGpsOnly }),
+  setIsFavoriteOnly: (isFavoriteOnly) => set({ isFavoriteOnly }),
+  setMinRating: (minRating) => set({ minRating }),
+  setSelectedAlbumId: (selectedAlbumId) => set({ selectedAlbumId }),
+  setSelectedTagId: (selectedTagId) => set({ selectedTagId }),
   setDateRange: (dateFrom, dateTo) => set({ dateFrom, dateTo }),
+  setDuplicateModalOpen: (isDuplicateModalOpen) => set({ isDuplicateModalOpen }),
   clearFilters: () =>
     set({
       searchQuery: '',
       hasGpsOnly: false,
+      isFavoriteOnly: false,
+      minRating: 0,
+      selectedAlbumId: null,
+      selectedTagId: null,
       dateFrom: null,
       dateTo: null,
       mediaTypeFilter: 'all',

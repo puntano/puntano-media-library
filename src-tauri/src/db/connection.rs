@@ -35,6 +35,8 @@ impl DatabaseManager {
 
     pub fn apply_migrations(conn: &Connection) -> Result<()> {
         conn.execute_batch(SCHEMA_SQL)?;
+        let _ = conn.execute("ALTER TABLE media_files ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0;", []);
+        let _ = conn.execute("ALTER TABLE media_files ADD COLUMN rating INTEGER NOT NULL DEFAULT 0;", []);
         Ok(())
     }
 

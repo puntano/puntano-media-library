@@ -2,7 +2,10 @@ use tauri::State;
 
 use super::indexing::AppState;
 use crate::db::{DatabaseManager, MediaRepository};
-use crate::models::{MediaItem, SpatialBoundingBox, SpatialClusterPoint, TimelineGroup};
+use crate::models::{
+    Album, DuplicateGroup, MediaFilterQuery, MediaItem, SpatialBoundingBox, SpatialClusterPoint,
+    Tag, TimelineGroup,
+};
 
 #[tauri::command]
 pub fn query_spatial_bounding_box(
@@ -52,7 +55,7 @@ pub fn query_media_paged(
 #[tauri::command]
 pub fn search_media(
     state: State<'_, AppState>,
-    query: crate::models::MediaFilterQuery,
+    query: MediaFilterQuery,
 ) -> Result<Vec<MediaItem>, String> {
     let conn = DatabaseManager::open(&state.db_path)
         .map_err(|e| format!("Failed to open DB: {}", e))?;
@@ -70,4 +73,177 @@ pub fn get_media_item(
 
     MediaRepository::get_by_id(&conn, id).map_err(|e| e.to_string())
 }
+
+// --------------------------------------------------------------------------
+// Duplicates Detection & File Management Commands
+// --------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn query_duplicate_groups(
+    state: State<'_, AppState>,
+) -> Result<Vec<DuplicateGroup>, String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::query_duplicate_groups(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_media_file(
+    state: State<'_, AppState>,
+    id: i64,
+    delete_from_disk: bool,
+) -> Result<Option<String>, String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::delete_media_file(&conn, id, delete_from_disk).map_err(|e| e.to_string())
+}
+
+// --------------------------------------------------------------------------
+// Favorites & Star Ratings Commands
+// --------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn set_media_favorite(
+    state: State<'_, AppState>,
+    id: i64,
+    is_favorite: bool,
+) -> Result<(), String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::set_media_favorite(&conn, id, is_favorite).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_media_rating(
+    state: State<'_, AppState>,
+    id: i64,
+    rating: u32,
+) -> Result<(), String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::set_media_rating(&conn, id, rating).map_err(|e| e.to_string())
+}
+
+// --------------------------------------------------------------------------
+// Albums & Collections Commands
+// --------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn create_album(
+    state: State<'_, AppState>,
+    name: String,
+    description: Option<String>,
+) -> Result<Album, String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::create_album(&conn, &name, description.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_albums(
+    state: State<'_, AppState>,
+) -> Result<Vec<Album>, String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::get_albums(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_album(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<(), String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::delete_album(&conn, id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn add_media_to_album(
+    state: State<'_, AppState>,
+    album_id: i64,
+    media_ids: Vec<i64>,
+) -> Result<(), String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::add_media_to_album(&conn, album_id, &media_ids).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn remove_media_from_album(
+    state: State<'_, AppState>,
+    album_id: i64,
+    media_ids: Vec<i64>,
+) -> Result<(), String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::remove_media_from_album(&conn, album_id, &media_ids).map_err(|e| e.to_string())
+}
+
+// --------------------------------------------------------------------------
+// Tags Commands
+// --------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn create_tag(
+    state: State<'_, AppState>,
+    name: String,
+    color: Option<String>,
+) -> Result<Tag, String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::create_tag(&conn, &name, color.as_deref()).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_tags(
+    state: State<'_, AppState>,
+) -> Result<Vec<Tag>, String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::get_tags(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn delete_tag(
+    state: State<'_, AppState>,
+    id: i64,
+) -> Result<(), String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::delete_tag(&conn, id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn add_tag_to_media(
+    state: State<'_, AppState>,
+    media_id: i64,
+    tag_id: i64,
+) -> Result<(), String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::add_tag_to_media(&conn, media_id, tag_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn remove_tag_from_media(
+    state: State<'_, AppState>,
+    media_id: i64,
+    tag_id: i64,
+) -> Result<(), String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::remove_tag_from_media(&conn, media_id, tag_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_media_tags(
+    state: State<'_, AppState>,
+    media_id: i64,
+) -> Result<Vec<Tag>, String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::get_media_tags(&conn, media_id).map_err(|e| e.to_string())
+}
+
 

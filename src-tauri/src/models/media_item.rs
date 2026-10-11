@@ -41,10 +41,42 @@ pub struct MediaItem {
 
     // Thumbnail cache
     pub thumbnail_path: Option<String>,
-    pub thumbnail_status: String, // "pending" | "ready" | "failed" | "skipped"
+    pub thumbnail_status: String,
+
+    // User curation
+    pub is_favorite: bool,
+    pub rating: u32,
 
     pub indexed_at: i64,
     pub updated_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuplicateGroup {
+    pub file_hash: String,
+    pub count: i64,
+    pub total_size_bytes: i64,
+    pub items: Vec<MediaItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Album {
+    pub id: i64,
+    pub name: String,
+    pub description: Option<String>,
+    pub cover_media_id: Option<i64>,
+    pub cover_file_path: Option<String>,
+    pub cover_file_hash: Option<String>,
+    pub media_count: i64,
+    pub created_at: i64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Tag {
+    pub id: i64,
+    pub name: String,
+    pub color: String,
+    pub media_count: i64,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

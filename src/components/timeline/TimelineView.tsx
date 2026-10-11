@@ -1,5 +1,5 @@
 import React, { useEffect, useState, useMemo } from 'react';
-import { Film, Image as ImageIcon, Calendar, ArrowUpDown, Maximize2 } from 'lucide-react';
+import { Film, Image as ImageIcon, Calendar, ArrowUpDown, Maximize2, Heart, Star } from 'lucide-react';
 import { tauriApi } from '../../services/tauriApi';
 import { MediaItem, TimelineGroup, MediaFilterQuery } from '../../types/media';
 import { useLibraryStore } from '../../stores/libraryStore';
@@ -23,6 +23,10 @@ export const TimelineView: React.FC = () => {
     mediaTypeFilter,
     searchQuery,
     hasGpsOnly,
+    isFavoriteOnly,
+    minRating,
+    selectedAlbumId,
+    selectedTagId,
     totalMediaCount,
     isIndexing,
     syncRevision,
@@ -73,6 +77,10 @@ export const TimelineView: React.FC = () => {
       media_type: mediaTypeFilter === 'all' ? undefined : mediaTypeFilter,
       query_text: searchQuery.trim() || undefined,
       has_gps_only: hasGpsOnly ? true : undefined,
+      is_favorite_only: isFavoriteOnly ? true : undefined,
+      min_rating: minRating > 0 ? minRating : undefined,
+      album_id: selectedAlbumId || undefined,
+      tag_id: selectedTagId || undefined,
       limit: PAGE_SIZE,
       offset: 0,
     };
@@ -88,7 +96,17 @@ export const TimelineView: React.FC = () => {
         console.error('Failed to query period media:', err);
         setIsLoadingItems(false);
       });
-  }, [selectedPeriod, mediaTypeFilter, searchQuery, hasGpsOnly, syncRevision]);
+  }, [
+    selectedPeriod,
+    mediaTypeFilter,
+    searchQuery,
+    hasGpsOnly,
+    isFavoriteOnly,
+    minRating,
+    selectedAlbumId,
+    selectedTagId,
+    syncRevision,
+  ]);
 
   // Load next batch of items for current period
   const handleLoadMore = () => {
@@ -108,6 +126,10 @@ export const TimelineView: React.FC = () => {
       media_type: mediaTypeFilter === 'all' ? undefined : mediaTypeFilter,
       query_text: searchQuery.trim() || undefined,
       has_gps_only: hasGpsOnly ? true : undefined,
+      is_favorite_only: isFavoriteOnly ? true : undefined,
+      min_rating: minRating > 0 ? minRating : undefined,
+      album_id: selectedAlbumId || undefined,
+      tag_id: selectedTagId || undefined,
       limit: PAGE_SIZE,
       offset: items.length,
     };
@@ -123,6 +145,22 @@ export const TimelineView: React.FC = () => {
         console.error('Failed to load more media:', err);
         setIsLoadingMore(false);
       });
+  };
+
+  const handleToggleFavorite = async (e: React.MouseEvent, item: MediaItem) => {
+    e.stopPropagation();
+    const nextFavorite = !item.is_favorite;
+    setItems((prev) =>
+      prev.map((i) => (i.id === item.id ? { ...i, is_favorite: nextFavorite } : i))
+    );
+    try {
+      await tauriApi.setMediaFavorite(item.id, nextFavorite);
+    } catch (err) {
+      console.error('Failed to toggle favorite:', err);
+      setItems((prev) =>
+        prev.map((i) => (i.id === item.id ? { ...i, is_favorite: item.is_favorite } : i))
+      );
+    }
   };
 
   const totalTimelineFiles = groups.reduce((acc, g) => acc + g.count, 0);
@@ -470,20 +508,63 @@ export const TimelineView: React.FC = () => {
                             mediaType={item.media_type}
                             alt={item.file_name}
                           />
-                          <div
+                          {/* Favorite Button */}
+                          <button
+                            onClick={(e) => handleToggleFavorite(e, item)}
+                            title={item.is_favorite ? 'Remove from favorites' : 'Add to favorites'}
                             style={{
                               position: 'absolute',
                               top: 8,
-                              right: 8,
-                              padding: '3px 6px',
-                              borderRadius: 4,
-                              backgroundColor: 'rgba(0, 0, 0, 0.65)',
+                              left: 8,
+                              padding: 5,
+                              borderRadius: 6,
+                              backgroundColor: item.is_favorite ? 'rgba(239, 68, 68, 0.9)' : 'rgba(0, 0, 0, 0.55)',
+                              backdropFilter: 'blur(4px)',
+                              border: 'none',
+                              cursor: 'pointer',
                               display: 'flex',
                               alignItems: 'center',
                               justifyContent: 'center',
+                              color: '#ffffff',
+                              transition: 'all 0.15s ease',
+                              zIndex: 10,
                             }}
                           >
-                            {item.media_type === 'video' ? <Film size={11} color="#ffffff" /> : <ImageIcon size={11} color="#ffffff" />}
+                            <Heart size={12} fill={item.is_favorite ? '#ffffff' : 'none'} />
+                          </button>
+
+                          <div style={{ position: 'absolute', top: 8, right: 8, display: 'flex', gap: 4, zIndex: 10 }}>
+                            {item.rating > 0 && (
+                              <div
+                                style={{
+                                  padding: '3px 6px',
+                                  borderRadius: 4,
+                                  backgroundColor: 'rgba(0, 0, 0, 0.65)',
+                                  backdropFilter: 'blur(4px)',
+                                  display: 'flex',
+                                  alignItems: 'center',
+                                  gap: 3,
+                                  fontSize: '0.68rem',
+                                  fontWeight: 700,
+                                  color: '#fbbf24',
+                                }}
+                              >
+                                <Star size={10} fill="#fbbf24" />
+                                <span>{item.rating}</span>
+                              </div>
+                            )}
+                            <div
+                              style={{
+                                padding: '3px 6px',
+                                borderRadius: 4,
+                                backgroundColor: 'rgba(0, 0, 0, 0.65)',
+                                display: 'flex',
+                                alignItems: 'center',
+                                justifyContent: 'center',
+                              }}
+                            >
+                              {item.media_type === 'video' ? <Film size={11} color="#ffffff" /> : <ImageIcon size={11} color="#ffffff" />}
+                            </div>
                           </div>
                         </div>
 
