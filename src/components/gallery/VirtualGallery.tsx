@@ -24,6 +24,7 @@ export const VirtualGallery: React.FC = () => {
     mediaTypeFilter,
     clearFilters,
     setTotalMediaCount,
+    syncRevision,
   } = useLibraryStore();
 
   const isFiltering =
@@ -76,12 +77,12 @@ export const VirtualGallery: React.FC = () => {
     [isFiltering, searchQuery, dateFrom, dateTo, mediaTypeFilter, hasGpsOnly, isLoading, setTotalMediaCount]
   );
 
-  // Reload from start when search filters change
+  // Reload from start when search filters change or background watcher syncs
   useEffect(() => {
     setItems([]);
     setHasMore(true);
     loadMediaBatch(0, false);
-  }, [searchQuery, hasGpsOnly, dateFrom, dateTo, mediaTypeFilter]);
+  }, [searchQuery, hasGpsOnly, dateFrom, dateTo, mediaTypeFilter, syncRevision]);
 
   const rowCount = Math.ceil(items.length / COLUMNS);
 

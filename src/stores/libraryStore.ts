@@ -20,6 +20,9 @@ interface LibraryState {
   lightboxIndex: number | null;
   lightboxItems: MediaItem[];
 
+  // Reactive Sync Revision (triggers view reloads on background watcher sync)
+  syncRevision: number;
+
   setActiveView: (view: 'map' | 'timeline' | 'gallery') => void;
   setTotalMediaCount: (count: number) => void;
   setIsIndexing: (isIndexing: boolean) => void;
@@ -27,6 +30,7 @@ interface LibraryState {
   setSelectedItem: (item: MediaItem | null) => void;
   setInspectorOpen: (open: boolean) => void;
   setMediaTypeFilter: (filter: 'all' | 'photo' | 'video') => void;
+  incrementSyncRevision: () => void;
 
   setSearchQuery: (query: string) => void;
   setHasGpsOnly: (hasGps: boolean) => void;
@@ -47,6 +51,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   selectedItem: null,
   isInspectorOpen: false,
   mediaTypeFilter: 'all',
+  syncRevision: 0,
 
   searchQuery: '',
   hasGpsOnly: false,
@@ -63,6 +68,7 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   setSelectedItem: (selectedItem) => set({ selectedItem, isInspectorOpen: selectedItem !== null }),
   setInspectorOpen: (isInspectorOpen) => set({ isInspectorOpen }),
   setMediaTypeFilter: (mediaTypeFilter) => set({ mediaTypeFilter }),
+  incrementSyncRevision: () => set((state) => ({ syncRevision: state.syncRevision + 1 })),
 
   setSearchQuery: (searchQuery) => set({ searchQuery }),
   setHasGpsOnly: (hasGpsOnly) => set({ hasGpsOnly }),

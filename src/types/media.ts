@@ -44,6 +44,7 @@ export interface SpatialClusterPoint {
   latitude: number;
   longitude: number;
   file_path: string;
+  file_hash: string;
   captured_at?: number;
   thumbnail_path?: string;
   media_type: 'photo' | 'video' | 'raw';
@@ -54,6 +55,7 @@ export interface TimelineGroup {
   count: number;
   cover_id?: number;
   cover_file_path?: string;
+  cover_file_hash?: string;
 }
 
 export interface IndexingProgressEvent {

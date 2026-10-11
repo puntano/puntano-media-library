@@ -13,6 +13,8 @@ export const MapView: React.FC = () => {
   const map = useRef<Map | null>(null);
   const clusterIndex = useRef<Supercluster<any, any> | null>(null);
   const activeMarkers = useRef<Marker[]>([]);
+  const trayContainerRef = useRef<HTMLDivElement>(null);
+  const renderClusterMarkersRef = useRef<() => void>(() => {});
 
   const [points, setPoints] = useState<SpatialClusterPoint[]>([]);
   const [selectedPoint, setSelectedPoint] = useState<SpatialClusterPoint | null>(null);
@@ -29,6 +31,7 @@ export const MapView: React.FC = () => {
     dateTo,
     isIndexing,
     totalMediaCount,
+    syncRevision,
   } = useLibraryStore();
 
   // 1. Initialize MapLibre
@@ -80,6 +83,7 @@ export const MapView: React.FC = () => {
         if (!map.current) return;
         const zoom = Math.floor(map.current.getZoom());
         setActiveZoom(zoom);
+        renderClusterMarkersRef.current();
 
         // Fetch visible bounding box points
         const bounds = map.current.getBounds();
@@ -132,7 +136,7 @@ export const MapView: React.FC = () => {
         setPoints(data);
       })
       .catch((err) => console.error('Spatial refresh error:', err));
-  }, [isIndexing, totalMediaCount]);
+  }, [isIndexing, totalMediaCount, syncRevision]);
 
   // Filter points according to active global filters
   const filteredPoints = useMemo(() => {
@@ -252,6 +256,18 @@ export const MapView: React.FC = () => {
     }
   };
 
+  renderClusterMarkersRef.current = renderClusterMarkers;
+
+  // Auto-scroll tray to selected item
+  useEffect(() => {
+    if (selectedPoint && trayContainerRef.current) {
+      const el = document.getElementById(`tray-point-${selectedPoint.id}`);
+      if (el) {
+        el.scrollIntoView({ behavior: 'smooth', inline: 'center', block: 'nearest' });
+      }
+    }
+  }, [selectedPoint]);
+
   const toMediaItem = (point: SpatialClusterPoint): MediaItem => {
     const lastSlash = Math.max(point.file_path.lastIndexOf('/'), point.file_path.lastIndexOf('\\'));
     return {
@@ -262,7 +278,7 @@ export const MapView: React.FC = () => {
       file_name: point.file_path.split(/[/\\]/).pop() || '',
       file_size: 3500000,
       file_modified_at: point.captured_at || Date.now(),
-      file_hash: `hash_${point.id}`,
+      file_hash: point.file_hash,
       mime_type: point.media_type === 'video' ? 'video/mp4' : 'image/jpeg',
       media_type: point.media_type,
       orientation: 1,
@@ -378,7 +394,7 @@ export const MapView: React.FC = () => {
           >
             <MediaThumbnail
               filePath={selectedPoint.file_path}
-              fileHash={`hash_${selectedPoint.id}`}
+              fileHash={selectedPoint.file_hash}
               mediaType={selectedPoint.media_type}
               alt={selectedPoint.file_path.split(/[/\\]/).pop() || 'Preview'}
             />
@@ -454,6 +470,11 @@ export const MapView: React.FC = () => {
             >
               {filteredPoints.length.toLocaleString()}
             </span>
+            {filteredPoints.length > 100 && (
+              <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                (showing first 100)
+              </span>
+            )}
           </div>
 
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
@@ -483,6 +504,7 @@ export const MapView: React.FC = () => {
         {/* Horizontal Filmstrip Carousel of Visible Photos */}
         {isTrayExpanded && (
           <div
+            ref={trayContainerRef}
             style={{
               display: 'flex',
               gap: 10,
@@ -503,6 +525,7 @@ export const MapView: React.FC = () => {
                 return (
                   <div
                     key={p.id}
+                    id={`tray-point-${p.id}`}
                     onClick={() => handleSelectPointFromTray(p)}
                     onDoubleClick={() => {
                       const item = toMediaItem(p);
@@ -530,7 +553,7 @@ export const MapView: React.FC = () => {
                   >
                     <MediaThumbnail
                       filePath={p.file_path}
-                      fileHash={`hash_${p.id}`}
+                      fileHash={p.file_hash}
                       mediaType={p.media_type}
                       alt={fileName}
                     />

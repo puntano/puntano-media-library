@@ -61,6 +61,7 @@ pub struct SpatialClusterPoint {
     pub latitude: f64,
     pub longitude: f64,
     pub file_path: String,
+    pub file_hash: String,
     pub captured_at: Option<i64>,
     pub thumbnail_path: Option<String>,
     pub media_type: String,
@@ -72,6 +73,7 @@ pub struct TimelineGroup {
     pub count: i64,
     pub cover_id: Option<i64>,
     pub cover_file_path: Option<String>,
+    pub cover_file_hash: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

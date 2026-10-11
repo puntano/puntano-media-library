@@ -20,7 +20,10 @@ dist-installers/
 *.db-journal
 *.db-wal
 *.db-shm
+benchmark-test.db*
 test-data/
+test-scratch-library/
+test-cache/
 scratch/
 out.txt
 err.txt

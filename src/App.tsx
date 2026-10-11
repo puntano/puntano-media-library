@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
 import {
   Map as MapIcon,
   Calendar as CalendarIcon,
@@ -9,6 +9,7 @@ import {
   Settings,
 } from 'lucide-react';
 import { useLibraryStore } from './stores/libraryStore';
+import { tauriApi } from './services/tauriApi';
 import { MapView } from './components/map/MapView';
 import { TimelineView } from './components/timeline/TimelineView';
 import { VirtualGallery } from './components/gallery/VirtualGallery';
@@ -19,9 +20,44 @@ import { LightboxModal } from './components/viewer/LightboxModal';
 import { LibrarySettingsModal } from './components/settings/LibrarySettingsModal';
 
 export const App: React.FC = () => {
-  const { activeView, setActiveView, mediaTypeFilter, setMediaTypeFilter, totalMediaCount } = useLibraryStore();
+  const {
+    activeView,
+    setActiveView,
+    mediaTypeFilter,
+    setMediaTypeFilter,
+    totalMediaCount,
+    setTotalMediaCount,
+    incrementSyncRevision,
+  } = useLibraryStore();
   const [showIndexModal, setShowIndexModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+
+  // Initialize total count on launch
+  useEffect(() => {
+    tauriApi.getTotalMediaCount().then((count) => setTotalMediaCount(count)).catch(console.error);
+  }, [setTotalMediaCount]);
+
+  // Real-time synchronization when live watcher detects filesystem changes
+  useEffect(() => {
+    let debounceTimer: ReturnType<typeof setTimeout> | null = null;
+    const unlistenPromise = tauriApi.onLibraryIncrementalSync((_path) => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      debounceTimer = setTimeout(async () => {
+        try {
+          const count = await tauriApi.getTotalMediaCount();
+          setTotalMediaCount(count);
+          incrementSyncRevision();
+        } catch (err) {
+          console.error('Failed to sync on watcher event:', err);
+        }
+      }, 400);
+    });
+
+    return () => {
+      if (debounceTimer) clearTimeout(debounceTimer);
+      unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, [setTotalMediaCount, incrementSyncRevision]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', overflow: 'hidden' }}>

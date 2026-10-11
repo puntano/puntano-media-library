@@ -294,23 +294,34 @@ function runIndexingBenchmark() {
   // Test 3: Bounding-box spatial query (San Francisco Bay Area)
   // BBox: Lat [37.0, 38.5], Lon [-123.0, -121.5]
   const sfBboxQuery = db.prepare(`
-    SELECT m.id, m.file_name, m.latitude, m.longitude
+    SELECT m.id, m.file_name, m.file_path, m.file_hash, m.latitude, m.longitude
     FROM media_spatial_index s
     JOIN media_files m ON s.id = m.id
     WHERE s.min_lat >= 37.0 AND s.max_lat <= 38.5
       AND s.min_lon >= -123.0 AND s.max_lon <= -121.5;
   `).all();
-  console.log(`  ✓ R*Tree Bounding Box Query [San Francisco Area]: returned ${sfBboxQuery.length} matching geotagged items.`);
+  if (!sfBboxQuery.every((item) => item.file_hash && item.file_hash.length > 0)) {
+    throw new Error('Spatial cluster points missing file_hash in benchmark verification');
+  }
+  console.log(`  ✓ R*Tree Bounding Box Query [San Francisco Area]: returned ${sfBboxQuery.length} matching geotagged items with verified file_hash.`);
 
   // Test 4: Chronological timeline query (Grouped by Year-Month)
   const timelineQuery = db.prepare(`
     SELECT 
       strftime('%Y-%m', datetime(captured_at / 1000, 'unixepoch')) as period,
-      count(*) as item_count
+      count(*) as item_count,
+      max(id) as cover_id,
+      file_path as cover_file_path,
+      file_hash as cover_file_hash
     FROM media_files
     GROUP BY period
     ORDER BY period DESC;
   `).all();
+  if (!timelineQuery.every((g) => g.cover_file_path && g.cover_file_hash)) {
+    throw new Error('Timeline groups missing cover file details in benchmark verification');
+  }
+  console.log(`  ✓ Chronological Timeline Query: ${timelineQuery.length} periods verified with cover hashes.`);
+
   // Test 5: Multi-Criteria Filter Query (Date range + Media type + Location search)
   const searchQuery = db.prepare(`
     SELECT count(*) as match_count

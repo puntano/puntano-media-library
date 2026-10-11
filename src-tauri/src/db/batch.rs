@@ -126,7 +126,7 @@ impl MediaRepository {
 
         let mut stmt = conn.prepare_cached(
             r#"
-            SELECT m.id, m.latitude, m.longitude, m.file_path, m.captured_at, m.thumbnail_path, m.media_type
+            SELECT m.id, m.latitude, m.longitude, m.file_path, m.file_hash, m.captured_at, m.thumbnail_path, m.media_type
             FROM media_spatial_index s
             JOIN media_files m ON s.id = m.id
             WHERE s.min_lat >= ?1 AND s.max_lat <= ?2
@@ -143,9 +143,10 @@ impl MediaRepository {
                     latitude: row.get(1)?,
                     longitude: row.get(2)?,
                     file_path: row.get(3)?,
-                    captured_at: row.get(4)?,
-                    thumbnail_path: row.get(5)?,
-                    media_type: row.get(6)?,
+                    file_hash: row.get(4)?,
+                    captured_at: row.get(5)?,
+                    thumbnail_path: row.get(6)?,
+                    media_type: row.get(7)?,
                 })
             },
         )?;
@@ -159,7 +160,7 @@ impl MediaRepository {
         if points.is_empty() {
             let mut fallback_stmt = conn.prepare_cached(
                 r#"
-                SELECT id, latitude, longitude, file_path, captured_at, thumbnail_path, media_type
+                SELECT id, latitude, longitude, file_path, file_hash, captured_at, thumbnail_path, media_type
                 FROM media_files
                 WHERE latitude IS NOT NULL AND longitude IS NOT NULL
                   AND latitude >= ?1 AND latitude <= ?2
@@ -176,9 +177,10 @@ impl MediaRepository {
                         latitude: row.get(1)?,
                         longitude: row.get(2)?,
                         file_path: row.get(3)?,
-                        captured_at: row.get(4)?,
-                        thumbnail_path: row.get(5)?,
-                        media_type: row.get(6)?,
+                        file_hash: row.get(4)?,
+                        captured_at: row.get(5)?,
+                        thumbnail_path: row.get(6)?,
+                        media_type: row.get(7)?,
                     })
                 },
             )?;
@@ -199,7 +201,8 @@ impl MediaRepository {
                 strftime('%Y-%m', datetime(COALESCE(captured_at, file_modified_at) / 1000, 'unixepoch')) as period,
                 count(*) as item_count,
                 max(id) as cover_id,
-                file_path as cover_file_path
+                file_path as cover_file_path,
+                file_hash as cover_file_hash
             FROM media_files
             WHERE COALESCE(captured_at, file_modified_at) IS NOT NULL
             GROUP BY period
@@ -213,6 +216,7 @@ impl MediaRepository {
                 count: row.get(1)?,
                 cover_id: row.get(2)?,
                 cover_file_path: row.get(3)?,
+                cover_file_hash: row.get(4)?,
             })
         })?;
 
@@ -464,5 +468,179 @@ impl MediaRepository {
             items.push(item?);
         }
         Ok(items)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::db::schema::SCHEMA_SQL;
+    use crate::models::{MediaFilterQuery, MediaItem, SpatialBoundingBox};
+
+    fn setup_test_db() -> Connection {
+        let conn = Connection::open_in_memory().unwrap();
+        conn.execute_batch(SCHEMA_SQL).unwrap();
+        conn.execute(
+            "INSERT INTO libraries (id, path, is_active, created_at) VALUES (1, '/test/lib', 1, 1000);",
+            [],
+        ).unwrap();
+        conn
+    }
+
+    fn create_test_item(
+        _id_num: i64,
+        name: &str,
+        hash: &str,
+        lat: Option<f64>,
+        lon: Option<f64>,
+        captured: Option<i64>,
+        mtype: &str,
+    ) -> MediaItem {
+        MediaItem {
+            id: None,
+            library_id: 1,
+            file_path: format!("/test/lib/{}", name),
+            directory: "/test/lib".to_string(),
+            file_name: name.to_string(),
+            file_size: 1024,
+            file_modified_at: captured.unwrap_or(1700000000000),
+            file_hash: hash.to_string(),
+            mime_type: if mtype == "video" { "video/mp4" } else { "image/jpeg" }.to_string(),
+            media_type: mtype.to_string(),
+            width: Some(1920),
+            height: Some(1080),
+            duration: if mtype == "video" { Some(15.0) } else { None },
+            orientation: 1,
+            captured_at: captured,
+            captured_at_local: None,
+            timezone_offset: None,
+            latitude: lat,
+            longitude: lon,
+            altitude: None,
+            geohash: None,
+            camera_make: Some("Sony".to_string()),
+            camera_model: Some("A7 IV".to_string()),
+            lens_model: None,
+            focal_length: None,
+            aperture: None,
+            iso: None,
+            exposure_time: None,
+            thumbnail_path: None,
+            thumbnail_status: "ready".to_string(),
+            indexed_at: 1700000000000,
+            updated_at: 1700000000000,
+        }
+    }
+
+    #[test]
+    fn test_query_by_bounding_box_returns_file_hash() {
+        let mut conn = setup_test_db();
+        let items = vec![
+            create_test_item(1, "sf_photo.jpg", "hash_sf_photo_1", Some(37.7749), Some(-122.4194), Some(1720000000000), "photo"),
+            create_test_item(2, "la_video.mp4", "hash_la_video_2", Some(34.0522), Some(-118.2437), Some(1720000000000), "video"),
+            create_test_item(3, "no_gps.jpg", "hash_no_gps_3", None, None, Some(1720000000000), "photo"),
+        ];
+
+        MediaRepository::insert_batch(&mut conn, &items).unwrap();
+
+        let bbox = SpatialBoundingBox {
+            min_lat: 37.0,
+            max_lat: 38.0,
+            min_lon: -123.0,
+            max_lon: -122.0,
+        };
+
+        let points = MediaRepository::query_by_bounding_box(&conn, &bbox, 100).unwrap();
+        assert_eq!(points.len(), 1);
+        let pt = &points[0];
+        assert_eq!(pt.file_path, "/test/lib/sf_photo.jpg");
+        assert_eq!(pt.file_hash, "hash_sf_photo_1");
+        assert_eq!(pt.media_type, "photo");
+        assert!((pt.latitude - 37.7749).abs() < 1e-4);
+        assert!((pt.longitude - (-122.4194)).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_query_timeline_groups_with_cover_details() {
+        let mut conn = setup_test_db();
+        let jul_ts = 1784073600000_i64; // 2026-07 approx
+        let aug_ts = 1786752000000_i64; // 2026-08 approx
+
+        let items = vec![
+            create_test_item(1, "jul1.jpg", "hash_jul_1", None, None, Some(jul_ts), "photo"),
+            create_test_item(2, "jul2.jpg", "hash_jul_2", None, None, Some(jul_ts + 1000), "photo"),
+            create_test_item(3, "aug1.jpg", "hash_aug_1", None, None, Some(aug_ts), "photo"),
+        ];
+
+        MediaRepository::insert_batch(&mut conn, &items).unwrap();
+
+        let groups = MediaRepository::query_timeline_groups(&conn).unwrap();
+        assert_eq!(groups.len(), 2);
+
+        let aug_group = groups.iter().find(|g| g.period == "2026-08").expect("August group missing");
+        assert_eq!(aug_group.count, 1);
+        assert_eq!(aug_group.cover_file_path, Some("/test/lib/aug1.jpg".to_string()));
+        assert_eq!(aug_group.cover_file_hash, Some("hash_aug_1".to_string()));
+
+        let jul_group = groups.iter().find(|g| g.period == "2026-07").expect("July group missing");
+        assert_eq!(jul_group.count, 2);
+        assert!(jul_group.cover_file_path.is_some());
+        assert!(jul_group.cover_file_hash.is_some());
+    }
+
+    #[test]
+    fn test_search_media_multi_criteria() {
+        let mut conn = setup_test_db();
+        let ts1 = 1720000000000_i64;
+        let ts2 = 1725000000000_i64;
+
+        let items = vec![
+            create_test_item(1, "sunset_beach.jpg", "h_beach", Some(36.0), Some(-120.0), Some(ts1), "photo"),
+            create_test_item(2, "city_night.mp4", "h_city", None, None, Some(ts2), "video"),
+        ];
+
+        MediaRepository::insert_batch(&mut conn, &items).unwrap();
+
+        let q_video = MediaFilterQuery {
+            media_type: Some("video".to_string()),
+            query_text: None,
+            date_from: None,
+            date_to: None,
+            camera_make: None,
+            has_gps_only: None,
+            limit: Some(10),
+            offset: Some(0),
+        };
+        let res_video = MediaRepository::search_media(&conn, &q_video).unwrap();
+        assert_eq!(res_video.len(), 1);
+        assert_eq!(res_video[0].file_name, "city_night.mp4");
+
+        let q_text = MediaFilterQuery {
+            media_type: None,
+            query_text: Some("beach".to_string()),
+            date_from: None,
+            date_to: None,
+            camera_make: None,
+            has_gps_only: None,
+            limit: Some(10),
+            offset: Some(0),
+        };
+        let res_text = MediaRepository::search_media(&conn, &q_text).unwrap();
+        assert_eq!(res_text.len(), 1);
+        assert_eq!(res_text[0].file_name, "sunset_beach.jpg");
+
+        let q_gps = MediaFilterQuery {
+            media_type: None,
+            query_text: None,
+            date_from: None,
+            date_to: None,
+            camera_make: None,
+            has_gps_only: Some(true),
+            limit: Some(10),
+            offset: Some(0),
+        };
+        let res_gps = MediaRepository::search_media(&conn, &q_gps).unwrap();
+        assert_eq!(res_gps.len(), 1);
+        assert_eq!(res_gps[0].file_name, "sunset_beach.jpg");
     }
 }

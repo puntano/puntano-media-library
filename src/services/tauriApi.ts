@@ -82,11 +82,11 @@ export const tauriApi = {
     if (!isTauri()) {
       // Mock spatial data for browser development
       return [
-        { id: 1, latitude: 37.7749, longitude: -122.4194, file_path: '/photos/sf.jpg', media_type: 'photo' },
-        { id: 2, latitude: 37.7833, longitude: -122.4167, file_path: '/photos/bay.jpg', media_type: 'photo' },
-        { id: 3, latitude: 34.0522, longitude: -118.2437, file_path: '/photos/la.mov', media_type: 'video' },
-        { id: 4, latitude: 40.7128, longitude: -74.0060, file_path: '/photos/nyc.jpg', media_type: 'photo' },
-        { id: 5, latitude: 51.5074, longitude: -0.1278, file_path: '/photos/london.jpg', media_type: 'photo' },
+        { id: 1, latitude: 37.7749, longitude: -122.4194, file_path: '/photos/sf.jpg', file_hash: 'mock_sf', media_type: 'photo' },
+        { id: 2, latitude: 37.7833, longitude: -122.4167, file_path: '/photos/bay.jpg', file_hash: 'mock_bay', media_type: 'photo' },
+        { id: 3, latitude: 34.0522, longitude: -118.2437, file_path: '/photos/la.mov', file_hash: 'mock_la', media_type: 'video' },
+        { id: 4, latitude: 40.7128, longitude: -74.0060, file_path: '/photos/nyc.jpg', file_hash: 'mock_nyc', media_type: 'photo' },
+        { id: 5, latitude: 51.5074, longitude: -0.1278, file_path: '/photos/london.jpg', file_hash: 'mock_london', media_type: 'photo' },
       ];
     }
     return await invoke<SpatialClusterPoint[]>('query_spatial_bounding_box', {
@@ -101,10 +101,10 @@ export const tauriApi = {
   async queryTimelineGroups(): Promise<TimelineGroup[]> {
     if (!isTauri()) {
       return [
-        { period: '2026-09', count: 482 },
-        { period: '2026-08', count: 1250 },
-        { period: '2026-07', count: 914 },
-        { period: '2026-06', count: 1530 },
+        { period: '2026-09', count: 482, cover_file_path: '/photos/sf.jpg', cover_file_hash: 'mock_sf' },
+        { period: '2026-08', count: 1250, cover_file_path: '/photos/bay.jpg', cover_file_hash: 'mock_bay' },
+        { period: '2026-07', count: 914, cover_file_path: '/photos/la.mov', cover_file_hash: 'mock_la' },
+        { period: '2026-06', count: 1530, cover_file_path: '/photos/nyc.jpg', cover_file_hash: 'mock_nyc' },
       ];
     }
     return await invoke<TimelineGroup[]>('query_timeline_groups');
@@ -194,6 +194,15 @@ export const tauriApi = {
       return Promise.resolve(() => {});
     }
     return listen<IndexingProgressEvent>('indexing-progress', (event) => {
+      callback(event.payload);
+    });
+  },
+
+  onLibraryIncrementalSync(callback: (path: string) => void): Promise<UnlistenFn> {
+    if (!isTauri()) {
+      return Promise.resolve(() => {});
+    }
+    return listen<string>('library-incremental-sync', (event) => {
       callback(event.payload);
     });
   },
