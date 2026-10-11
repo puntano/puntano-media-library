@@ -212,6 +212,15 @@ export const TimelineView: React.FC = () => {
     return list;
   }, [items, sortDirection]);
 
+  // Fast O(1) index lookup map to eliminate N^2 searches during rendering
+  const itemIndexMap = useMemo(() => {
+    const map = new Map<number, number>();
+    for (let i = 0; i < items.length; i++) {
+      map.set(items[i].id, i);
+    }
+    return map;
+  }, [items]);
+
   return (
     <div style={{ display: 'flex', width: '100%', height: '100%', overflow: 'hidden' }}>
       {/* Left Timeline Date Scrubber & Sidebar */}
@@ -474,7 +483,7 @@ export const TimelineView: React.FC = () => {
                   }}
                 >
                   {dayGroup.items.map((item) => {
-                    const overallIndex = items.findIndex((it) => it.id === item.id);
+                    const overallIndex = itemIndexMap.get(item.id) ?? 0;
                     return (
                       <div
                         key={item.id}

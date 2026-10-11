@@ -1,4 +1,4 @@
-import React from 'react';
+import React, { memo } from 'react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { getThumbnailUrl } from '../../services/thumbnailProtocol';
 import { isTauri } from '../../services/tauriApi';
@@ -12,7 +12,7 @@ interface MediaThumbnailProps {
   className?: string;
 }
 
-export const MediaThumbnail: React.FC<MediaThumbnailProps> = ({
+export const MediaThumbnail: React.FC<MediaThumbnailProps> = memo(({
   filePath,
   fileHash,
   mediaType,
@@ -44,4 +44,4 @@ export const MediaThumbnail: React.FC<MediaThumbnailProps> = ({
       }}
     />
   );
-};
+});

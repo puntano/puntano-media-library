@@ -170,6 +170,21 @@ ON media_tags(media_id);
 
 CREATE INDEX IF NOT EXISTS idx_media_tags_tag 
 ON media_tags(tag_id);
+
+-- High-Performance Composite & Expression Indexes for Sub-Millisecond Sorting
+CREATE INDEX IF NOT EXISTS idx_media_timeline_order 
+ON media_files(COALESCE(captured_at, file_modified_at) DESC, id DESC);
+
+CREATE INDEX IF NOT EXISTS idx_media_type_timeline 
+ON media_files(media_type, COALESCE(captured_at, file_modified_at) DESC);
+
+CREATE INDEX IF NOT EXISTS idx_media_fav_timeline 
+ON media_files(is_favorite, COALESCE(captured_at, file_modified_at) DESC) 
+WHERE is_favorite = 1;
+
+CREATE INDEX IF NOT EXISTS idx_media_rating_timeline 
+ON media_files(rating, COALESCE(captured_at, file_modified_at) DESC) 
+WHERE rating > 0;
 "#
     };
 }

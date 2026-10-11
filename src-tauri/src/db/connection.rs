@@ -40,7 +40,8 @@ impl DatabaseManager {
              PRAGMA foreign_keys = ON;
              PRAGMA temp_store = MEMORY;
              PRAGMA mmap_size = 268435456;
-             PRAGMA page_size = 4096;",
+             PRAGMA page_size = 4096;
+             PRAGMA threads = 4;",
         )?;
         Ok(())
     }

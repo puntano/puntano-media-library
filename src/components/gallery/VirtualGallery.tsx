@@ -15,6 +15,13 @@ export const VirtualGallery: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [hasMore, setHasMore] = useState<boolean>(true);
 
+  const isLoadingRef = useRef(false);
+  const hasMoreRef = useRef(true);
+  const itemsLengthRef = useRef(0);
+  itemsLengthRef.current = items.length;
+  hasMoreRef.current = hasMore;
+  isLoadingRef.current = isLoading;
+
   const {
     openLightbox,
     searchQuery,
@@ -44,7 +51,8 @@ export const VirtualGallery: React.FC = () => {
 
   const loadMediaBatch = useCallback(
     async (offset: number, append: boolean = false) => {
-      if (isLoading) return;
+      if (isLoadingRef.current) return;
+      isLoadingRef.current = true;
       setIsLoading(true);
 
       try {
@@ -75,7 +83,9 @@ export const VirtualGallery: React.FC = () => {
           setItems(result);
         }
 
-        setHasMore(result.length === PAGE_SIZE);
+        const moreAvailable = result.length === PAGE_SIZE;
+        hasMoreRef.current = moreAvailable;
+        setHasMore(moreAvailable);
 
         if (offset === 0 && !isFiltering) {
           tauriApi.getTotalMediaCount().then((count) => setTotalMediaCount(count));
@@ -83,6 +93,7 @@ export const VirtualGallery: React.FC = () => {
       } catch (err) {
         console.error('Failed to load media items:', err);
       } finally {
+        isLoadingRef.current = false;
         setIsLoading(false);
       }
     },
@@ -97,7 +108,6 @@ export const VirtualGallery: React.FC = () => {
       minRating,
       selectedAlbumId,
       selectedTagId,
-      isLoading,
       setTotalMediaCount,
     ]
   );
@@ -123,6 +133,7 @@ export const VirtualGallery: React.FC = () => {
   useEffect(() => {
     setItems([]);
     setHasMore(true);
+    hasMoreRef.current = true;
     loadMediaBatch(0, false);
   }, [
     searchQuery,
@@ -135,6 +146,7 @@ export const VirtualGallery: React.FC = () => {
     dateTo,
     mediaTypeFilter,
     syncRevision,
+    loadMediaBatch,
   ]);
 
   const rowCount = Math.ceil(items.length / COLUMNS);
@@ -150,13 +162,13 @@ export const VirtualGallery: React.FC = () => {
 
   // Infinite Scroll Trigger
   useEffect(() => {
-    if (virtualItems.length === 0 || !hasMore || isLoading) return;
+    if (virtualItems.length === 0 || !hasMoreRef.current || isLoadingRef.current) return;
 
     const lastItem = virtualItems[virtualItems.length - 1];
     if (lastItem && lastItem.index >= rowCount - 2) {
-      loadMediaBatch(items.length, true);
+      loadMediaBatch(itemsLengthRef.current, true);
     }
-  }, [virtualItems, rowCount, hasMore, isLoading, items.length, loadMediaBatch]);
+  }, [virtualItems, rowCount, loadMediaBatch]);
 
   return (
     <div
