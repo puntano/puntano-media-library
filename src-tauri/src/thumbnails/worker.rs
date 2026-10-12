@@ -131,26 +131,23 @@ impl ThumbnailWorker {
         // Batch update database in a single fast transaction
         if let Ok(tx) = conn.transaction() {
             {
-                let mut ready_stmt = tx
-                    .prepare_cached(
-                        "UPDATE media_files SET thumbnail_path = ?1, thumbnail_status = 'ready', updated_at = ?2 WHERE id = ?3;",
-                    )
-                    .unwrap();
+                let ready_res = tx.prepare_cached(
+                    "UPDATE media_files SET thumbnail_path = ?1, thumbnail_status = 'ready', updated_at = ?2 WHERE id = ?3;",
+                );
+                let failed_res = tx.prepare_cached(
+                    "UPDATE media_files SET thumbnail_status = 'failed', updated_at = ?1 WHERE id = ?2;",
+                );
 
-                let mut failed_stmt = tx
-                    .prepare_cached(
-                        "UPDATE media_files SET thumbnail_status = 'failed', updated_at = ?1 WHERE id = ?2;",
-                    )
-                    .unwrap();
-
-                let now = chrono::Utc::now().timestamp_millis();
-                for (id, res) in results {
-                    match res {
-                        Some(path) => {
-                            let _ = ready_stmt.execute(params![path, now, id]);
-                        }
-                        None => {
-                            let _ = failed_stmt.execute(params![now, id]);
+                if let (Ok(mut ready_stmt), Ok(mut failed_stmt)) = (ready_res, failed_res) {
+                    let now = chrono::Utc::now().timestamp_millis();
+                    for (id, res) in results {
+                        match res {
+                            Some(path) => {
+                                let _ = ready_stmt.execute(params![path, now, id]);
+                            }
+                            None => {
+                                let _ = failed_stmt.execute(params![now, id]);
+                            }
                         }
                     }
                 }

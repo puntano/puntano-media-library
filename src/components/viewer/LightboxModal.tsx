@@ -23,6 +23,7 @@ export const LightboxModal: React.FC = () => {
     nextLightboxItem,
     prevLightboxItem,
     setSelectedItem,
+    incrementSyncRevision,
   } = useLibraryStore();
 
   const [zoom, setZoom] = useState<number>(1);
@@ -57,10 +58,11 @@ export const LightboxModal: React.FC = () => {
     activeItem.orientation = exifOrientation;
     try {
       await tauriApi.setMediaOrientation(activeItem.id, exifOrientation);
+      incrementSyncRevision();
     } catch (err) {
       console.error('Failed to save media orientation:', err);
     }
-  }, [activeItem, rotation]);
+  }, [activeItem, rotation, incrementSyncRevision]);
 
   // Next & previous media prefetching for zero-latency transitions
   useEffect(() => {
@@ -85,6 +87,8 @@ export const LightboxModal: React.FC = () => {
     if (lightboxIndex === null) return;
 
     const handleKeyDown = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+
       if (e.key === 'Escape') {
         closeLightbox();
       } else if (e.key === 'ArrowRight') {

@@ -515,6 +515,7 @@ export const TimelineView: React.FC = () => {
                             filePath={item.file_path}
                             fileHash={item.file_hash}
                             mediaType={item.media_type}
+                            orientation={item.orientation}
                             alt={item.file_name}
                           />
                           {/* Favorite Button */}

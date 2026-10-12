@@ -2,7 +2,7 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use walkdir::{DirEntry, WalkDir};
 
-const SUPPORTED_EXTENSIONS: &[&str] = &[
+pub const SUPPORTED_EXTENSIONS: &[&str] = &[
     // Standard Photos
     "jpg", "jpeg", "png", "webp", "heic", "heif", "tiff", "tif", "avif",
     // RAW Photos

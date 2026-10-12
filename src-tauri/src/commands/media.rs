@@ -329,8 +329,7 @@ pub fn export_media_files(
     for path_str in source_paths {
         let src = Path::new(&path_str);
         if src.exists() && src.is_file() {
-            if let Some(name) = src.file_name() {
-                let target = dest.join(name);
+            if let Some(target) = resolve_collision_safe_path(dest, src) {
                 if std::fs::copy(src, target).is_ok() {
                     copied += 1;
                 }
@@ -338,6 +337,60 @@ pub fn export_media_files(
         }
     }
     Ok(copied)
+}
+
+pub fn resolve_collision_safe_path(dest: &std::path::Path, src: &std::path::Path) -> Option<std::path::PathBuf> {
+    let file_name = src.file_name()?.to_str()?;
+    let stem = src.file_stem()?.to_str()?;
+    let ext = src.extension().and_then(|e| e.to_str());
+
+    let mut target = dest.join(file_name);
+    let mut counter = 1;
+
+    while target.exists() {
+        let new_name = match ext {
+            Some(e) => format!("{}_{}.{}", stem, counter, e),
+            None => format!("{}_{}", stem, counter),
+        };
+        target = dest.join(new_name);
+        counter += 1;
+    }
+
+    Some(target)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs::File;
+
+    #[test]
+    fn test_resolve_collision_safe_path() {
+        let root = std::env::temp_dir().join(format!("test_export_{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+        let src_dir = root.join("src");
+        let dest_dir = root.join("dest");
+        std::fs::create_dir_all(&src_dir).unwrap();
+        std::fs::create_dir_all(&dest_dir).unwrap();
+
+        let src_file = src_dir.join("photo.jpg");
+        File::create(&src_file).unwrap();
+
+        // 1. Initial path should be photo.jpg when destination is empty
+        let first_target = resolve_collision_safe_path(&dest_dir, &src_file).unwrap();
+        assert_eq!(first_target.file_name().unwrap(), "photo.jpg");
+
+        // 2. If photo.jpg exists in destination, next should be photo_1.jpg
+        File::create(&dest_dir.join("photo.jpg")).unwrap();
+        let second_target = resolve_collision_safe_path(&dest_dir, &src_file).unwrap();
+        assert_eq!(second_target.file_name().unwrap(), "photo_1.jpg");
+
+        // 3. If photo_1.jpg also exists in destination, next should be photo_2.jpg
+        File::create(&dest_dir.join("photo_1.jpg")).unwrap();
+        let third_target = resolve_collision_safe_path(&dest_dir, &src_file).unwrap();
+        assert_eq!(third_target.file_name().unwrap(), "photo_2.jpg");
+
+        let _ = std::fs::remove_dir_all(&root);
+    }
 }
 
 

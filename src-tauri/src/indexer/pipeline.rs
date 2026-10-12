@@ -257,7 +257,7 @@ impl IndexingPipeline {
     }
 
     /// Generates a standard base32 geohash string for coarse tile spatial aggregation
-    fn encode_geohash(latitude: f64, longitude: f64, precision: usize) -> String {
+    pub fn encode_geohash(latitude: f64, longitude: f64, precision: usize) -> String {
         const BASE32: &[u8] = b"0123456789bcdefghjkmnpqrstuvwxyz";
         let mut lat_range = (-90.0, 90.0);
         let mut lon_range = (-180.0, 180.0);

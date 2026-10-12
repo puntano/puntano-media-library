@@ -234,6 +234,7 @@ export const MetadataDrawer: React.FC = () => {
                 filePath={selectedItem.file_path}
                 fileHash={selectedItem.file_hash}
                 mediaType={selectedItem.media_type}
+                orientation={selectedItem.orientation}
                 alt={selectedItem.file_name}
                 style={{ objectFit: 'contain' }}
               />

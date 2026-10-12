@@ -175,17 +175,31 @@ impl LibraryWatcher {
             item.height = v.height;
             item.duration = v.duration;
             item.captured_at = v.captured_at;
+            item.captured_at_local = v.captured_at_local;
             item.latitude = v.latitude;
             item.longitude = v.longitude;
         } else {
             let p = PhotoMetadataParser::parse(path);
             item.width = p.width;
             item.height = p.height;
+            item.orientation = p.orientation;
             item.captured_at = p.captured_at;
+            item.captured_at_local = p.captured_at_local;
+            item.timezone_offset = p.timezone_offset;
             item.latitude = p.latitude;
             item.longitude = p.longitude;
+            item.altitude = p.altitude;
             item.camera_make = p.camera_make;
             item.camera_model = p.camera_model;
+            item.lens_model = p.lens_model;
+            item.focal_length = p.focal_length;
+            item.aperture = p.aperture;
+            item.iso = p.iso;
+            item.exposure_time = p.exposure_time;
+        }
+
+        if let (Some(lat), Some(lon)) = (item.latitude, item.longitude) {
+            item.geohash = Some(IndexingPipeline::encode_geohash(lat, lon, 7));
         }
 
         // Insert into database using the active WAL connection
@@ -193,16 +207,35 @@ impl LibraryWatcher {
         let _ = app_handle.emit("library-incremental-sync", path_str);
     }
 
-    fn is_supported_media(path: &Path) -> bool {
+    pub fn is_supported_media(path: &Path) -> bool {
         let ext = path
             .extension()
             .and_then(|s| s.to_str())
             .unwrap_or("")
             .to_lowercase();
 
-        matches!(
-            ext.as_str(),
-            "jpg" | "jpeg" | "png" | "webp" | "heic" | "heif" | "dng" | "cr2" | "arw" | "mp4" | "mov" | "mkv"
-        )
+        crate::indexer::walker::SUPPORTED_EXTENSIONS.contains(&ext.as_str())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_supported_extensions_consistency() {
+        for ext in crate::indexer::walker::SUPPORTED_EXTENSIONS {
+            let p = PathBuf::from(format!("sample_file.{}", ext));
+            assert!(
+                LibraryWatcher::is_supported_media(&p),
+                "Watcher should support extension: {}",
+                ext
+            );
+        }
+
+        let txt = PathBuf::from("notes.txt");
+        let exe = PathBuf::from("run.exe");
+        assert!(!LibraryWatcher::is_supported_media(&txt));
+        assert!(!LibraryWatcher::is_supported_media(&exe));
     }
 }

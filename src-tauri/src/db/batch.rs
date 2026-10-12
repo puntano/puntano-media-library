@@ -484,7 +484,7 @@ impl MediaRepository {
         }
 
         let sort_col = match filter.sort_by.as_deref() {
-            Some("name") => "file_name",
+            Some("name") => "file_name COLLATE NOCASE",
             Some("size") => "file_size",
             Some("rating") => "rating",
             _ => "COALESCE(captured_at, file_modified_at)",
@@ -1280,19 +1280,23 @@ mod tests {
         let mut item_a = create_test_item(1, "aaa_first.jpg", "h_a", None, None, Some(1720000000000), "photo");
         item_a.file_size = 1000;
         item_a.rating = 2;
+        let mut item_mid = create_test_item(1, "MMM_capital.jpg", "h_m", None, None, Some(1720000020000), "photo");
+        item_mid.file_size = 2000;
         let mut item_b = create_test_item(1, "zzz_second.mp4", "h_b", Some(37.77), Some(-122.41), Some(1720000050000), "video");
         item_b.file_size = 5000;
         item_b.rating = 5;
 
-        MediaRepository::insert_batch(&mut conn, &[item_a, item_b]).unwrap();
+        MediaRepository::insert_batch(&mut conn, &[item_a, item_mid, item_b]).unwrap();
 
-        // Sort by name ASC
+        // Sort by name ASC (verifying case-insensitive alphabetical ordering)
         let sorted_name_asc = MediaRepository::search_media(&conn, &MediaFilterQuery {
             sort_by: Some("name".into()),
             sort_order: Some("asc".into()),
             ..Default::default()
         }).unwrap();
         assert_eq!(sorted_name_asc[0].file_name, "aaa_first.jpg");
+        assert_eq!(sorted_name_asc[1].file_name, "MMM_capital.jpg");
+        assert_eq!(sorted_name_asc[2].file_name, "zzz_second.mp4");
 
         // Sort by name DESC
         let sorted_name_desc = MediaRepository::search_media(&conn, &MediaFilterQuery {
@@ -1301,6 +1305,8 @@ mod tests {
             ..Default::default()
         }).unwrap();
         assert_eq!(sorted_name_desc[0].file_name, "zzz_second.mp4");
+        assert_eq!(sorted_name_desc[1].file_name, "MMM_capital.jpg");
+        assert_eq!(sorted_name_desc[2].file_name, "aaa_first.jpg");
 
         // Sort by size DESC
         let sorted_size_desc = MediaRepository::search_media(&conn, &MediaFilterQuery {
@@ -1318,10 +1324,10 @@ mod tests {
 
         // Library Stats
         let stats = MediaRepository::get_library_stats(&conn).unwrap();
-        assert_eq!(stats.total_files, 2);
-        assert_eq!(stats.total_photos, 1);
+        assert_eq!(stats.total_files, 3);
+        assert_eq!(stats.total_photos, 2);
         assert_eq!(stats.total_videos, 1);
-        assert_eq!(stats.total_size_bytes, 6000);
+        assert_eq!(stats.total_size_bytes, 8000);
         assert_eq!(stats.total_geotagged, 1);
     }
 }
