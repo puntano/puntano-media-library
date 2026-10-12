@@ -38,6 +38,24 @@ export const LightboxModal: React.FC = () => {
     setIsFullResLoaded(false);
   }, [lightboxIndex]);
 
+  // Next & previous media prefetching for zero-latency transitions
+  useEffect(() => {
+    if (lightboxIndex === null || lightboxItems.length === 0) return;
+
+    const indicesToPrefetch = [lightboxIndex - 1, lightboxIndex + 1];
+    for (const idx of indicesToPrefetch) {
+      if (idx >= 0 && idx < lightboxItems.length) {
+        const item = lightboxItems[idx];
+        if (item && item.media_type === 'photo') {
+          const img = new Image();
+          img.src = isTauri()
+            ? convertFileSrc(item.file_path)
+            : getThumbnailUrl(item.file_hash, item.media_type);
+        }
+      }
+    }
+  }, [lightboxIndex, lightboxItems]);
+
   // Keyboard Navigation
   useEffect(() => {
     if (lightboxIndex === null) return;

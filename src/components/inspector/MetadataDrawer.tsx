@@ -13,6 +13,10 @@ import {
   FolderPlus,
   Tag as TagIcon,
   Plus,
+  Copy,
+  Check,
+  Trash2,
+  AlertTriangle,
 } from 'lucide-react';
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useLibraryStore } from '../../stores/libraryStore';
@@ -36,16 +40,23 @@ export const MetadataDrawer: React.FC = () => {
   const [tags, setTags] = useState<Tag[]>([]);
   const [newTagInput, setNewTagInput] = useState<string>('');
   const [isAddingTag, setIsAddingTag] = useState<boolean>(false);
+  const [copiedPath, setCopiedPath] = useState<boolean>(false);
+  const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
+  const [isDeleting, setIsDeleting] = useState<boolean>(false);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
       if (e.key === 'Escape' && isInspectorOpen) {
-        setInspectorOpen(false);
+        if (showDeleteConfirm) {
+          setShowDeleteConfirm(false);
+        } else {
+          setInspectorOpen(false);
+        }
       }
     };
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [isInspectorOpen, setInspectorOpen]);
+  }, [isInspectorOpen, setInspectorOpen, showDeleteConfirm]);
 
   // Load tags for current item
   useEffect(() => {
@@ -73,6 +84,32 @@ export const MetadataDrawer: React.FC = () => {
   const handleRevealInExplorer = () => {
     if (selectedItem?.file_path) {
       tauriApi.showInFolder(selectedItem.file_path);
+    }
+  };
+
+  const handleCopyPath = async () => {
+    if (!selectedItem?.file_path) return;
+    try {
+      await navigator.clipboard.writeText(selectedItem.file_path);
+      setCopiedPath(true);
+      setTimeout(() => setCopiedPath(false), 2000);
+    } catch (err) {
+      console.error('Failed to copy file path:', err);
+    }
+  };
+
+  const handleDeleteFile = async (deleteFromDisk: boolean) => {
+    if (!selectedItem?.id || isDeleting) return;
+    setIsDeleting(true);
+    try {
+      await tauriApi.deleteMediaFile(selectedItem.id, deleteFromDisk);
+      setShowDeleteConfirm(false);
+      handleClose();
+      incrementSyncRevision();
+    } catch (err) {
+      console.error('Failed to delete file:', err);
+    } finally {
+      setIsDeleting(false);
     }
   };
 
@@ -422,21 +459,63 @@ export const MetadataDrawer: React.FC = () => {
                 </span>
               </div>
 
-              {/* Reveal in Explorer Button */}
+              {/* File Actions */}
+              <div style={{ display: 'grid', gridTemplateColumns: '1fr 1fr', gap: 8, marginTop: 8 }}>
+                <button
+                  className="btn-secondary"
+                  onClick={handleRevealInExplorer}
+                  style={{
+                    fontSize: '0.75rem',
+                    padding: '6px 10px',
+                    gap: 6,
+                    justifyContent: 'center',
+                  }}
+                  title="Reveal in native OS file explorer"
+                >
+                  <FolderOpen size={14} />
+                  Reveal
+                </button>
+                <button
+                  className="btn-secondary"
+                  onClick={handleCopyPath}
+                  style={{
+                    fontSize: '0.75rem',
+                    padding: '6px 10px',
+                    gap: 6,
+                    justifyContent: 'center',
+                    color: copiedPath ? 'var(--status-success)' : undefined,
+                  }}
+                  title="Copy full absolute file path to clipboard"
+                >
+                  {copiedPath ? <Check size={14} /> : <Copy size={14} />}
+                  {copiedPath ? 'Copied!' : 'Copy Path'}
+                </button>
+              </div>
+
               <button
-                className="btn-secondary"
-                onClick={handleRevealInExplorer}
+                onClick={() => setShowDeleteConfirm(true)}
                 style={{
-                  fontSize: '0.75rem',
-                  padding: '6px 12px',
-                  gap: 6,
-                  width: '100%',
-                  justifyContent: 'center',
                   marginTop: 6,
+                  width: '100%',
+                  padding: '7px 12px',
+                  borderRadius: 'var(--radius-sm)',
+                  border: '1px solid rgba(239, 68, 68, 0.3)',
+                  backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                  color: '#ef4444',
+                  fontSize: '0.75rem',
+                  fontWeight: 600,
+                  cursor: 'pointer',
+                  display: 'flex',
+                  alignItems: 'center',
+                  justifyContent: 'center',
+                  gap: 6,
+                  transition: 'all 0.15s ease',
                 }}
+                onMouseEnter={(e) => (e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.18)')}
+                onMouseLeave={(e) => (e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.08)')}
               >
-                <FolderOpen size={14} />
-                Show in File Explorer
+                <Trash2 size={13} />
+                Delete File
               </button>
             </div>
           </div>
@@ -575,6 +654,103 @@ export const MetadataDrawer: React.FC = () => {
           item={selectedItem}
           onClose={() => setShowAddToAlbum(false)}
         />
+      )}
+
+      {/* Delete Confirmation Modal */}
+      {showDeleteConfirm && (
+        <div
+          style={{
+            position: 'fixed',
+            inset: 0,
+            backgroundColor: 'rgba(0, 0, 0, 0.75)',
+            backdropFilter: 'blur(8px)',
+            zIndex: 200,
+            display: 'flex',
+            alignItems: 'center',
+            justifyContent: 'center',
+            padding: 16,
+          }}
+          onClick={() => !isDeleting && setShowDeleteConfirm(false)}
+        >
+          <div
+            className="glass-panel"
+            style={{
+              width: '100%',
+              maxWidth: 420,
+              borderRadius: 'var(--radius-lg)',
+              padding: 24,
+              border: '1px solid rgba(239, 68, 68, 0.3)',
+              backgroundColor: 'var(--bg-primary)',
+              boxShadow: 'var(--shadow-xl)',
+            }}
+            onClick={(e) => e.stopPropagation()}
+          >
+            <div style={{ display: 'flex', alignItems: 'center', gap: 10, color: '#ef4444', marginBottom: 12 }}>
+              <AlertTriangle size={24} />
+              <h3 style={{ fontSize: '1.1rem', fontWeight: 700 }}>Delete Media Item</h3>
+            </div>
+            <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.5 }}>
+              How would you like to delete <strong style={{ color: '#ffffff' }}>{selectedItem.file_name}</strong>?
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <button
+                className="btn-secondary"
+                disabled={isDeleting}
+                onClick={() => handleDeleteFile(false)}
+                style={{
+                  justifyContent: 'flex-start',
+                  padding: '10px 14px',
+                  textAlign: 'left',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 2,
+                }}
+              >
+                <div style={{ fontWeight: 600, fontSize: '0.85rem' }}>Remove from Library only</div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  Keeps the physical file safe on disk, removing it from Puntano's index.
+                </div>
+              </button>
+
+              <button
+                disabled={isDeleting}
+                onClick={() => handleDeleteFile(true)}
+                style={{
+                  backgroundColor: 'rgba(239, 68, 68, 0.15)',
+                  border: '1px solid rgba(239, 68, 68, 0.4)',
+                  color: '#ef4444',
+                  borderRadius: 'var(--radius-sm)',
+                  padding: '10px 14px',
+                  textAlign: 'left',
+                  cursor: isDeleting ? 'not-allowed' : 'pointer',
+                  display: 'flex',
+                  flexDirection: 'column',
+                  gap: 2,
+                  transition: 'all 0.15s ease',
+                }}
+                onMouseEnter={(e) => !isDeleting && (e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.25)')}
+                onMouseLeave={(e) => !isDeleting && (e.currentTarget.style.backgroundColor = 'rgba(239, 68, 68, 0.15)')}
+              >
+                <div style={{ fontWeight: 700, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Trash2 size={13} />
+                  Permanently Delete from Disk
+                </div>
+                <div style={{ fontSize: '0.72rem', color: 'rgba(239, 68, 68, 0.8)' }}>
+                  Warning: Permanently removes the file from your filesystem storage. Cannot be undone.
+                </div>
+              </button>
+
+              <button
+                className="btn-secondary"
+                disabled={isDeleting}
+                onClick={() => setShowDeleteConfirm(false)}
+                style={{ marginTop: 6, justifyContent: 'center' }}
+              >
+                Cancel
+              </button>
+            </div>
+          </div>
+        </div>
       )}
     </>
   );

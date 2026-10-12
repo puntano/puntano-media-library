@@ -160,6 +160,10 @@ pub fn run() {
             commands::media::add_tag_to_media,
             commands::media::remove_tag_from_media,
             commands::media::get_media_tags,
+            commands::media::batch_set_media_favorite,
+            commands::media::batch_delete_media,
+            commands::media::batch_add_tag_to_media,
+            commands::media::batch_add_media_to_album,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

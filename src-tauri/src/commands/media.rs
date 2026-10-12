@@ -246,4 +246,53 @@ pub fn get_media_tags(
     MediaRepository::get_media_tags(&conn, media_id).map_err(|e| e.to_string())
 }
 
+// --------------------------------------------------------------------------
+// High-Performance Batch Operations Commands
+// --------------------------------------------------------------------------
+
+#[tauri::command]
+pub fn batch_set_media_favorite(
+    state: State<'_, AppState>,
+    ids: Vec<i64>,
+    is_favorite: bool,
+) -> Result<(), String> {
+    let mut conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::batch_set_media_favorite(&mut conn, &ids, is_favorite).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn batch_delete_media(
+    state: State<'_, AppState>,
+    ids: Vec<i64>,
+    delete_from_disk: bool,
+) -> Result<Vec<String>, String> {
+    let mut conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::batch_delete_media(&mut conn, &ids, delete_from_disk).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn batch_add_tag_to_media(
+    state: State<'_, AppState>,
+    media_ids: Vec<i64>,
+    tag_id: i64,
+) -> Result<(), String> {
+    let mut conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::batch_add_tag_to_media(&mut conn, &media_ids, tag_id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn batch_add_media_to_album(
+    state: State<'_, AppState>,
+    album_id: i64,
+    media_ids: Vec<i64>,
+) -> Result<(), String> {
+    let mut conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::batch_add_media_to_album(&mut conn, album_id, &media_ids).map_err(|e| e.to_string())
+}
+
+
 

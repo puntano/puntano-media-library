@@ -27,6 +27,14 @@ interface LibraryState {
   lightboxIndex: number | null;
   lightboxItems: MediaItem[];
 
+  // Gallery Density & Batch Selection State
+  galleryColumns: number;
+  isSelectionMode: boolean;
+  selectedMediaIds: number[];
+
+  // Keyboard Shortcuts Modal State
+  isShortcutsModalOpen: boolean;
+
   // Reactive Sync Revision (triggers view reloads on background watcher sync)
   syncRevision: number;
 
@@ -49,11 +57,30 @@ interface LibraryState {
   setDuplicateModalOpen: (open: boolean) => void;
   clearFilters: () => void;
 
+  setGalleryColumns: (cols: number) => void;
+  setSelectionMode: (active: boolean) => void;
+  toggleMediaSelection: (id: number) => void;
+  selectAllMedia: (ids: number[]) => void;
+  clearMediaSelection: () => void;
+  setShortcutsModalOpen: (open: boolean) => void;
+
   openLightbox: (items: MediaItem[], index: number) => void;
   closeLightbox: () => void;
   nextLightboxItem: () => void;
   prevLightboxItem: () => void;
 }
+
+const getSavedColumns = (): number => {
+  if (typeof window === 'undefined') return 5;
+  try {
+    const saved = localStorage.getItem('puntano_gallery_columns');
+    if (saved) {
+      const parsed = parseInt(saved, 10);
+      if (parsed >= 3 && parsed <= 8) return parsed;
+    }
+  } catch {}
+  return 5;
+};
 
 export const useLibraryStore = create<LibraryState>((set, get) => ({
   activeView: 'map',
@@ -74,6 +101,11 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   dateFrom: null,
   dateTo: null,
   isDuplicateModalOpen: false,
+
+  galleryColumns: getSavedColumns(),
+  isSelectionMode: false,
+  selectedMediaIds: [],
+  isShortcutsModalOpen: false,
 
   lightboxIndex: null,
   lightboxItems: [],
@@ -107,6 +139,37 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       dateTo: null,
       mediaTypeFilter: 'all',
     }),
+
+  setGalleryColumns: (cols: number) => {
+    const clamped = Math.max(3, Math.min(8, cols));
+    try {
+      localStorage.setItem('puntano_gallery_columns', clamped.toString());
+    } catch {}
+    set({ galleryColumns: clamped });
+  },
+
+  setSelectionMode: (isSelectionMode) => {
+    set({ isSelectionMode, selectedMediaIds: isSelectionMode ? get().selectedMediaIds : [] });
+  },
+
+  toggleMediaSelection: (id: number) => {
+    const current = get().selectedMediaIds;
+    if (current.includes(id)) {
+      set({ selectedMediaIds: current.filter((x) => x !== id) });
+    } else {
+      set({ selectedMediaIds: [...current, id], isSelectionMode: true });
+    }
+  },
+
+  selectAllMedia: (ids: number[]) => {
+    set({ selectedMediaIds: ids, isSelectionMode: true });
+  },
+
+  clearMediaSelection: () => {
+    set({ selectedMediaIds: [], isSelectionMode: false });
+  },
+
+  setShortcutsModalOpen: (isShortcutsModalOpen) => set({ isShortcutsModalOpen }),
 
   openLightbox: (items, index) =>
     set({

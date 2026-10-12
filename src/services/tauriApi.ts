@@ -379,6 +379,40 @@ export const tauriApi = {
     return await invoke<Tag[]>('get_media_tags', { mediaId });
   },
 
+  // Batch Operations
+  async batchSetMediaFavorite(ids: number[], isFavorite: boolean): Promise<void> {
+    if (!isTauri()) {
+      console.warn('[Mock] batchSetMediaFavorite:', ids.length, isFavorite);
+      return;
+    }
+    await invoke('batch_set_media_favorite', { ids, isFavorite });
+  },
+
+  async batchDeleteMedia(ids: number[], deleteFromDisk: boolean = false): Promise<string[]> {
+    if (!isTauri()) {
+      console.warn('[Mock] batchDeleteMedia:', ids.length, deleteFromDisk);
+      return ids.map((id) => `/mock/deleted/${id}.jpg`);
+    }
+    return await invoke<string[]>('batch_delete_media', { ids, deleteFromDisk });
+  },
+
+  async batchAddTagToMedia(mediaIds: number[], tagId: number): Promise<void> {
+    if (!isTauri()) {
+      console.warn('[Mock] batchAddTagToMedia:', mediaIds.length, tagId);
+      return;
+    }
+    await invoke('batch_add_tag_to_media', { mediaIds, tagId });
+  },
+
+  async batchAddMediaToAlbum(albumId: number, mediaIds: number[]): Promise<void> {
+    if (!isTauri()) {
+      console.warn('[Mock] batchAddMediaToAlbum:', albumId, mediaIds.length);
+      return;
+    }
+    await invoke('batch_add_media_to_album', { albumId, mediaIds });
+  },
+
+
   onIndexingProgress(callback: (event: IndexingProgressEvent) => void): Promise<UnlistenFn> {
     if (!isTauri()) {
       return Promise.resolve(() => {});

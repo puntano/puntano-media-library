@@ -9,6 +9,7 @@ import {
   Plus,
   Settings,
   Copy,
+  Keyboard,
 } from 'lucide-react';
 import { useLibraryStore } from './stores/libraryStore';
 import { tauriApi } from './services/tauriApi';
@@ -22,6 +23,7 @@ import { FilterBar } from './components/search/FilterBar';
 import { LightboxModal } from './components/viewer/LightboxModal';
 import { LibrarySettingsModal } from './components/settings/LibrarySettingsModal';
 import { DuplicatesModal } from './components/duplicates/DuplicatesModal';
+import { KeyboardShortcutsModal } from './components/common/KeyboardShortcutsModal';
 
 export const App: React.FC = () => {
   const {
@@ -34,6 +36,8 @@ export const App: React.FC = () => {
     incrementSyncRevision,
     isDuplicateModalOpen,
     setDuplicateModalOpen,
+    isShortcutsModalOpen,
+    setShortcutsModalOpen,
   } = useLibraryStore();
   const [showIndexModal, setShowIndexModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
@@ -42,6 +46,28 @@ export const App: React.FC = () => {
   useEffect(() => {
     tauriApi.getTotalMediaCount().then((count) => setTotalMediaCount(count)).catch(console.error);
   }, [setTotalMediaCount]);
+
+  // Global keyboard shortcuts
+  useEffect(() => {
+    const handleGlobalKey = (e: KeyboardEvent) => {
+      if (['INPUT', 'TEXTAREA'].includes((e.target as HTMLElement)?.tagName)) return;
+
+      if (e.key === '?') {
+        e.preventDefault();
+        setShortcutsModalOpen(!isShortcutsModalOpen);
+      } else if (e.key === '1') {
+        setActiveView('map');
+      } else if (e.key === '2') {
+        setActiveView('timeline');
+      } else if (e.key === '3') {
+        setActiveView('gallery');
+      } else if (e.key === '4') {
+        setActiveView('albums');
+      }
+    };
+    window.addEventListener('keydown', handleGlobalKey);
+    return () => window.removeEventListener('keydown', handleGlobalKey);
+  }, [isShortcutsModalOpen, setShortcutsModalOpen, setActiveView]);
 
   // Real-time synchronization when live watcher detects filesystem changes
   useEffect(() => {
@@ -255,6 +281,16 @@ export const App: React.FC = () => {
             <Copy size={16} color="var(--accent-primary)" />
           </button>
 
+          {/* Keyboard Shortcuts Trigger */}
+          <button
+            className="btn-secondary"
+            onClick={() => setShortcutsModalOpen(true)}
+            title="Keyboard Shortcuts (?)"
+            style={{ padding: '8px 10px' }}
+          >
+            <Keyboard size={16} />
+          </button>
+
           {/* Settings / Library Management */}
           <button
             className="btn-secondary"
@@ -297,6 +333,9 @@ export const App: React.FC = () => {
           onOpenIndexModal={() => setShowIndexModal(true)}
         />
       )}
+
+      {/* Keyboard Shortcuts Modal */}
+      <KeyboardShortcutsModal />
 
       {/* Slide-Over Metadata Inspector */}
       <MetadataDrawer />

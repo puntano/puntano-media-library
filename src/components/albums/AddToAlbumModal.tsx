@@ -5,11 +5,12 @@ import { Album, MediaItem } from '../../types/media';
 import { useLibraryStore } from '../../stores/libraryStore';
 
 interface AddToAlbumModalProps {
-  item: MediaItem;
+  item?: MediaItem;
+  mediaIds?: number[];
   onClose: () => void;
 }
 
-export const AddToAlbumModal: React.FC<AddToAlbumModalProps> = ({ item, onClose }) => {
+export const AddToAlbumModal: React.FC<AddToAlbumModalProps> = ({ item, mediaIds, onClose }) => {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [newAlbumName, setNewAlbumName] = useState<string>('');
@@ -17,6 +18,8 @@ export const AddToAlbumModal: React.FC<AddToAlbumModalProps> = ({ item, onClose 
   const [successAlbumId, setSuccessAlbumId] = useState<number | null>(null);
 
   const { incrementSyncRevision } = useLibraryStore();
+
+  const targetIds = mediaIds && mediaIds.length > 0 ? mediaIds : item ? [item.id] : [];
 
   const loadAlbums = async () => {
     setIsLoading(true);
@@ -35,14 +38,15 @@ export const AddToAlbumModal: React.FC<AddToAlbumModalProps> = ({ item, onClose 
   }, []);
 
   const handleAddToAlbum = async (albumId: number) => {
+    if (targetIds.length === 0) return;
     setIsAdding(true);
     try {
-      await tauriApi.addMediaToAlbum(albumId, [item.id]);
+      await tauriApi.batchAddMediaToAlbum(albumId, targetIds);
       setSuccessAlbumId(albumId);
       incrementSyncRevision();
       setTimeout(() => {
         onClose();
-      }, 1000);
+      }, 800);
     } catch (err) {
       console.error('Failed to add to album:', err);
     } finally {
@@ -52,17 +56,17 @@ export const AddToAlbumModal: React.FC<AddToAlbumModalProps> = ({ item, onClose 
 
   const handleCreateAndAdd = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!newAlbumName.trim()) return;
+    if (!newAlbumName.trim() || targetIds.length === 0) return;
 
     setIsAdding(true);
     try {
       const album = await tauriApi.createAlbum(newAlbumName.trim());
-      await tauriApi.addMediaToAlbum(album.id, [item.id]);
+      await tauriApi.batchAddMediaToAlbum(album.id, targetIds);
       setSuccessAlbumId(album.id);
       incrementSyncRevision();
       setTimeout(() => {
         onClose();
-      }, 1000);
+      }, 800);
     } catch (err) {
       console.error('Failed to create and add to album:', err);
     } finally {
@@ -109,7 +113,7 @@ export const AddToAlbumModal: React.FC<AddToAlbumModalProps> = ({ item, onClose 
         </div>
 
         <div style={{ fontSize: '0.78rem', color: 'var(--text-secondary)' }}>
-          Adding: <strong style={{ color: 'var(--text-primary)' }}>{item.file_name}</strong>
+          Adding: <strong style={{ color: 'var(--text-primary)' }}>{item ? item.file_name : `${targetIds.length} selected items`}</strong>
         </div>
 
         {/* Existing Albums List */}

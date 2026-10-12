@@ -16,14 +16,18 @@ impl ThumbnailResizer {
         src_path: P,
         dst_path: Q,
     ) -> Result<(), String> {
-        let reader = ImageReader::open(src_path.as_ref())
-            .map_err(|e| format!("Failed to open image file: {}", e))?
-            .with_guessed_format()
-            .map_err(|e| format!("Failed to identify format: {}", e))?;
-
-        let img = reader
-            .decode()
-            .map_err(|e| format!("Failed to decode image: {}", e))?;
+        let path_ref = src_path.as_ref();
+        let img = match ImageReader::open(path_ref)
+            .map_err(|e| e.to_string())
+            .and_then(|r| r.with_guessed_format().map_err(|e| e.to_string()))
+            .and_then(|r| r.decode().map_err(|e| e.to_string()))
+        {
+            Ok(decoded) => decoded,
+            Err(_) => {
+                // Fallback: fast extraction of embedded preview JPEG for camera RAW formats (CR2, ARW, NEF, DNG, etc.)
+                Self::try_extract_raw_preview(path_ref)?
+            }
+        };
 
         let (orig_w, orig_h) = (img.width(), img.height());
         if orig_w == 0 || orig_h == 0 {
@@ -110,4 +114,86 @@ impl ThumbnailResizer {
             }
         }
     }
+
+    /// Fast scan for embedded preview JPEG in camera RAW files (Canon CR2/CR3, Nikon NEF, Sony ARW, Adobe DNG)
+    fn try_extract_raw_preview(path: &Path) -> Result<DynamicImage, String> {
+        use std::io::Read;
+
+        let mut file = File::open(path).map_err(|e| format!("Failed to open RAW file: {}", e))?;
+        // Read up to 8MB where embedded preview JPEGs are located in modern camera RAW headers
+        let mut buffer = Vec::new();
+        let max_read = 8 * 1024 * 1024;
+        let mut take = (&mut file).take(max_read);
+        take.read_to_end(&mut buffer).map_err(|e| format!("Failed to read RAW header: {}", e))?;
+
+        if buffer.len() < 4 {
+            return Err("RAW file buffer too small".into());
+        }
+
+        // Search for embedded JPEG start markers: [0xFF, 0xD8, 0xFF]
+        let mut start_indices = Vec::new();
+        for i in 0..(buffer.len().saturating_sub(3)) {
+            if buffer[i] == 0xFF && buffer[i + 1] == 0xD8 && buffer[i + 2] == 0xFF {
+                start_indices.push(i);
+            }
+        }
+
+        // Try decoding candidate slices and select the highest resolution embedded preview
+        let mut best_img: Option<DynamicImage> = None;
+        let mut best_pixels = 0u64;
+
+        for &start in &start_indices {
+            let slice = &buffer[start..];
+            if slice.len() > 128 {
+                if let Ok(img) = image::load_from_memory(slice) {
+                    let pixels = (img.width() as u64) * (img.height() as u64);
+                    if pixels > best_pixels {
+                        best_pixels = pixels;
+                        best_img = Some(img);
+                    }
+                }
+            }
+        }
+
+        if let Some(img) = best_img {
+            return Ok(img);
+        }
+
+        Err("No embedded preview found in RAW file".into())
+    }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Write;
+
+    #[test]
+    fn test_extract_embedded_raw_preview() {
+        // Synthesize a JPEG in memory (200x200 RGB)
+        let img = DynamicImage::new_rgb8(200, 200);
+        let mut jpeg_buf = std::io::Cursor::new(Vec::new());
+        img.write_to(&mut jpeg_buf, image::ImageFormat::Jpeg).unwrap();
+        let jpeg_bytes = jpeg_buf.into_inner();
+
+        // Create a synthetic RAW container with RAW header prefix + embedded JPEG
+        let temp_dir = std::env::temp_dir();
+        let raw_path = temp_dir.join(format!("test_sample_{}.cr2", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap().as_nanos()));
+
+        let mut file = std::fs::File::create(&raw_path).unwrap();
+        // Canon CR2 header signature + dummy metadata padding
+        file.write_all(b"II*\0\x10\0\0\0CR\x02\0").unwrap();
+        file.write_all(&vec![0u8; 1024]).unwrap();
+        file.write_all(&jpeg_bytes).unwrap();
+        drop(file);
+
+        let extracted = ThumbnailResizer::try_extract_raw_preview(&raw_path);
+        let _ = std::fs::remove_file(&raw_path);
+
+        assert!(extracted.is_ok(), "Failed to extract embedded JPEG preview from simulated RAW file");
+        let decoded = extracted.unwrap();
+        assert_eq!(decoded.width(), 200);
+        assert_eq!(decoded.height(), 200);
+    }
+}
+

@@ -601,6 +601,43 @@ impl MediaRepository {
         Ok(())
     }
 
+    pub fn batch_set_media_favorite(conn: &mut Connection, ids: &[i64], is_favorite: bool) -> Result<()> {
+        let fav_int = if is_favorite { 1 } else { 0 };
+        let now = chrono::Utc::now().timestamp_millis();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "UPDATE media_files SET is_favorite = ?1, updated_at = ?2 WHERE id = ?3;",
+            )?;
+            for &id in ids {
+                let _ = stmt.execute(params![fav_int, now, id]);
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn batch_delete_media(conn: &mut Connection, ids: &[i64], delete_from_disk: bool) -> Result<Vec<String>> {
+        let mut deleted_paths = Vec::new();
+        let tx = conn.transaction()?;
+        {
+            let mut get_stmt = tx.prepare_cached("SELECT file_path FROM media_files WHERE id = ?1 LIMIT 1;")?;
+            let mut del_stmt = tx.prepare_cached("DELETE FROM media_files WHERE id = ?1;")?;
+            for &id in ids {
+                let path: Option<String> = get_stmt.query_row(params![id], |row| row.get(0)).optional()?;
+                if let Some(p) = path {
+                    let _ = del_stmt.execute(params![id]);
+                    if delete_from_disk {
+                        let _ = std::fs::remove_file(&p);
+                    }
+                    deleted_paths.push(p);
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(deleted_paths)
+    }
+
     // --------------------------------------------------------------------------
     // Albums & Collections
     // --------------------------------------------------------------------------
@@ -682,6 +719,27 @@ impl MediaRepository {
         Ok(())
     }
 
+    pub fn batch_add_media_to_album(conn: &mut Connection, album_id: i64, media_ids: &[i64]) -> Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT OR IGNORE INTO album_media (album_id, media_id, added_at) VALUES (?1, ?2, ?3);",
+            )?;
+            for &mid in media_ids {
+                let _ = stmt.execute(params![album_id, mid, now]);
+            }
+            if let Some(&first_id) = media_ids.first() {
+                let _ = tx.execute(
+                    "UPDATE albums SET cover_media_id = ?1 WHERE id = ?2 AND cover_media_id IS NULL;",
+                    params![first_id, album_id],
+                );
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
     pub fn remove_media_from_album(conn: &Connection, album_id: i64, media_ids: &[i64]) -> Result<()> {
         for &mid in media_ids {
             conn.execute(
@@ -746,6 +804,18 @@ impl MediaRepository {
             "INSERT OR IGNORE INTO media_tags (media_id, tag_id) VALUES (?1, ?2);",
             params![media_id, tag_id],
         )?;
+        Ok(())
+    }
+
+    pub fn batch_add_tag_to_media(conn: &mut Connection, media_ids: &[i64], tag_id: i64) -> Result<()> {
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached("INSERT OR IGNORE INTO media_tags (media_id, tag_id) VALUES (?1, ?2);")?;
+            for &mid in media_ids {
+                let _ = stmt.execute(params![mid, tag_id]);
+            }
+        }
+        tx.commit()?;
         Ok(())
     }
 
@@ -1121,4 +1191,59 @@ mod tests {
         MediaRepository::delete_tag(&conn, tag.id).unwrap();
         assert_eq!(MediaRepository::get_tags(&conn).unwrap().len(), 0);
     }
+
+    #[test]
+    fn test_batch_operations_suite() {
+        let mut conn = setup_test_db();
+        let items = vec![
+            create_test_item(1, "batch1.jpg", "h_b1", None, None, Some(1720000000000), "photo"),
+            create_test_item(1, "batch2.jpg", "h_b2", None, None, Some(1720000001000), "photo"),
+            create_test_item(1, "batch3.jpg", "h_b3", None, None, Some(1720000002000), "photo"),
+        ];
+        MediaRepository::insert_batch(&mut conn, &items).unwrap();
+        let paged = MediaRepository::query_media_paged(&conn, 10, 0).unwrap();
+        let ids: Vec<i64> = paged.iter().map(|item| item.id.unwrap()).collect();
+        assert_eq!(ids.len(), 3);
+
+        // 1. Batch Favorite
+        MediaRepository::batch_set_media_favorite(&mut conn, &ids, true).unwrap();
+        let favs = MediaRepository::search_media(&conn, &MediaFilterQuery {
+            is_favorite_only: Some(true),
+            ..Default::default()
+        }).unwrap();
+        assert_eq!(favs.len(), 3);
+
+        MediaRepository::batch_set_media_favorite(&mut conn, &ids[0..1], false).unwrap();
+        let favs2 = MediaRepository::search_media(&conn, &MediaFilterQuery {
+            is_favorite_only: Some(true),
+            ..Default::default()
+        }).unwrap();
+        assert_eq!(favs2.len(), 2);
+
+        // 2. Batch Add Tag
+        let tag = MediaRepository::create_tag(&conn, "Nature", Some("#22c55e")).unwrap();
+        MediaRepository::batch_add_tag_to_media(&mut conn, &ids, tag.id).unwrap();
+        let tagged = MediaRepository::search_media(&conn, &MediaFilterQuery {
+            tag_id: Some(tag.id),
+            ..Default::default()
+        }).unwrap();
+        assert_eq!(tagged.len(), 3);
+
+        // 3. Batch Add to Album
+        let album = MediaRepository::create_album(&conn, "Batch Album", None).unwrap();
+        MediaRepository::batch_add_media_to_album(&mut conn, album.id, &ids).unwrap();
+        let album_items = MediaRepository::search_media(&conn, &MediaFilterQuery {
+            album_id: Some(album.id),
+            ..Default::default()
+        }).unwrap();
+        assert_eq!(album_items.len(), 3);
+
+        // 4. Batch Delete
+        let deleted = MediaRepository::batch_delete_media(&mut conn, &ids[0..2], false).unwrap();
+        assert_eq!(deleted.len(), 2);
+        let remaining = MediaRepository::query_media_paged(&conn, 10, 0).unwrap();
+        assert_eq!(remaining.len(), 1);
+        assert_eq!(remaining[0].id.unwrap(), ids[2]);
+    }
 }
+
