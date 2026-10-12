@@ -12,35 +12,39 @@
 ## Key Features
 
 1. **🗺️ GPU-Accelerated Map View:** Geolocation of photos and videos using embedded GPS coordinates, featuring multi-level spatial clustering (`MapLibre GL` + `Supercluster`).
-2. **📅 Chronological Timeline View:** Virtualized timeline grouping media by year, month, and day with sub-millisecond B-Tree queries.
+2. **📅 Chronological Timeline View:** Virtualized timeline grouping media by year, month, and day with sub-millisecond B-Tree queries and expression index sorting.
 3. **⚡ High-Throughput Indexing Pipeline:**
-   - Multi-threaded recursive directory walker (`Rayon`).
+   - Multi-threaded recursive directory walker and SIMD thumbnail daemon (`Rayon`).
    - Non-blocking header-only metadata parsing (EXIF/XMP for photos, QuickTime/ISO BMFF atoms for videos via `nom-exif`).
    - Transactional SQLite batch writes reaching **75,000+ inserts/sec** in WAL mode.
 4. **📍 Native SQLite R\*Tree Spatial Indexing:** Sub-millisecond geographic bounding-box queries kept automatically synchronized via database triggers.
 5. **🪟 Virtualized Grid View:** High-fps viewport rendering with zero-allocation DOM virtualization (`@tanstack/react-virtual`).
+6. **🧹 Exact Duplicate Cleaner:** Instant file hash clustering and duplicate deletion tool to free up disk space.
+7. **⭐ Media Curation (Favorites & 5-Star Ratings):** Instant one-click favoriting, star ratings, and real-time multi-criteria filtering.
+8. **📁 Albums & Color-Coded Tags:** Custom user collections and flexible tagging taxonomy.
+9. **🔄 Live Filesystem Synchronization:** Automatic background detection of new, updated, and deleted media files.
 
 ---
 
 ## 💾 Download & Installation
 
-Pre-compiled production binaries for Windows (x64) are generated in the release bundle:
+Pre-compiled production binaries for Windows (x64) are available on the [**GitHub Releases Page (v0.2.0)**](https://github.com/puntano/puntano-media-library/releases/tag/v0.2.0):
 
 | Package Type | File | Description |
 | :--- | :--- | :--- |
-| **Setup Wizard (Recommended)** | `Puntano Media Library_0.1.1_x64-setup.exe` | Windows NSIS installer with desktop shortcut, Start menu entry, and seamless in-place updates (~4.3 MB). |
-| **Enterprise Installer** | `Puntano Media Library_0.1.1_x64_en-US.msi` | Windows Installer package suitable for unattended or enterprise deployments (~6.0 MB). |
-| **Portable Executable** | `puntano-media-library.exe` | Standalone binary with embedded UI assets. Requires no installation—run directly from any folder or USB drive (~18.7 MB). |
+| **Setup Wizard (Recommended)** | [`Puntano.Media.Library_0.2.0_x64-setup.exe`](https://github.com/puntano/puntano-media-library/releases/download/v0.2.0/Puntano.Media.Library_0.2.0_x64-setup.exe) | Windows NSIS installer with desktop shortcut, Start menu entry, and seamless in-place updates (~3.57 MB). |
+| **Enterprise Installer** | [`Puntano.Media.Library_0.2.0_x64_en-US.msi`](https://github.com/puntano/puntano-media-library/releases/download/v0.2.0/Puntano.Media.Library_0.2.0_x64_en-US.msi) | Windows Installer MSI package suitable for unattended or enterprise deployments (~4.85 MB). |
+| **Portable Executable** | `puntano-media-library.exe` | Standalone binary with embedded UI assets. Requires no installation—run directly from any folder or USB drive. |
 
 ### How to Install & Update on Windows
-1. Download the setup file (`.exe` or `.msi`).
+1. Download the setup file ([`.exe`](https://github.com/puntano/puntano-media-library/releases/download/v0.2.0/Puntano.Media.Library_0.2.0_x64-setup.exe) or [`.msi`](https://github.com/puntano/puntano-media-library/releases/download/v0.2.0/Puntano.Media.Library_0.2.0_x64_en-US.msi)).
 2. Double-click the installer and follow the prompt instructions.
 3. **In-Place Updates**: If a previous version of Puntano Media Library is already installed, running the setup `.exe` updates the app automatically in-place without requiring you to uninstall first.
-4. **Note on Windows SmartScreen:** Because this local build is self-signed, Windows SmartScreen may show a *"Windows protected your PC"* prompt on first launch. Click **"More info"** and then **"Run anyway"**.
+4. **Note on Windows SmartScreen:** Because this build is self-signed, Windows SmartScreen may show a *"Windows protected your PC"* prompt on first launch. Click **"More info"** and then **"Run anyway"**.
 
 ### How to Share with Others
-- **Option A (GitHub Releases):** Create a new release in your GitHub repository and upload the generated `.exe` and `.msi` files from `dist-installers/` or `src-tauri/target/release/bundle/`.
-- **Option B (Direct Sharing):** Send the `Puntano Media Library_0.1.1_x64-setup.exe` file directly via Google Drive, OneDrive, or USB stick. Recipients do not need Node.js, Rust, or C++ installed.
+- **Option A (GitHub Releases):** Share the direct release page: [https://github.com/puntano/puntano-media-library/releases/tag/v0.2.0](https://github.com/puntano/puntano-media-library/releases/tag/v0.2.0).
+- **Option B (Direct Sharing):** Send the `Puntano.Media.Library_0.2.0_x64-setup.exe` file directly via Google Drive, OneDrive, or USB stick. Recipients do not need Node.js, Rust, or C++ installed.
 
 ---
 
