@@ -12,6 +12,9 @@ pub struct MediaFilterQuery {
     pub min_rating: Option<u32>,
     pub album_id: Option<i64>,
     pub tag_id: Option<i64>,
+    pub sort_by: Option<String>,     // "date" | "name" | "size" | "rating"
+    pub sort_order: Option<String>,  // "asc" | "desc"
     pub limit: Option<u32>,
     pub offset: Option<u32>,
 }
+

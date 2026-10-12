@@ -1,6 +1,6 @@
 use rusqlite::{params, Connection, OptionalExtension, Result};
 use crate::models::{
-    Album, DuplicateGroup, MediaFilterQuery, MediaItem, SpatialBoundingBox, SpatialClusterPoint,
+    Album, DuplicateGroup, LibraryStats, MediaFilterQuery, MediaItem, SpatialBoundingBox, SpatialClusterPoint,
     Tag, TimelineGroup,
 };
 
@@ -483,7 +483,19 @@ impl MediaRepository {
             params.push(Box::new(tag_id));
         }
 
-        sql.push_str(" ORDER BY COALESCE(captured_at, file_modified_at) DESC, id DESC LIMIT ? OFFSET ?;");
+        let sort_col = match filter.sort_by.as_deref() {
+            Some("name") => "file_name",
+            Some("size") => "file_size",
+            Some("rating") => "rating",
+            _ => "COALESCE(captured_at, file_modified_at)",
+        };
+
+        let sort_dir = match filter.sort_order.as_deref() {
+            Some("asc") => "ASC",
+            _ => "DESC",
+        };
+
+        sql.push_str(&format!(" ORDER BY {} {}, id DESC LIMIT ? OFFSET ?;", sort_col, sort_dir));
         let limit = filter.limit.unwrap_or(100);
         let offset = filter.offset.unwrap_or(0);
         params.push(Box::new(limit));
@@ -636,6 +648,46 @@ impl MediaRepository {
         }
         tx.commit()?;
         Ok(deleted_paths)
+    }
+
+    pub fn set_media_orientation(conn: &Connection, id: i64, orientation: u32) -> Result<()> {
+        let now = chrono::Utc::now().timestamp_millis();
+        conn.execute(
+            "UPDATE media_files SET orientation = ?1, updated_at = ?2 WHERE id = ?3;",
+            params![orientation, now, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_library_stats(conn: &Connection) -> Result<LibraryStats> {
+        let (total_files, total_photos, total_videos, total_size_bytes, total_geotagged, total_favorites): (i64, i64, i64, i64, i64, i64) = conn.query_row(
+            r#"
+            SELECT 
+                count(*),
+                count(CASE WHEN media_type = 'photo' THEN 1 END),
+                count(CASE WHEN media_type = 'video' THEN 1 END),
+                coalesce(sum(file_size), 0),
+                count(CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL THEN 1 END),
+                count(CASE WHEN is_favorite = 1 THEN 1 END)
+            FROM media_files;
+            "#,
+            [],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?)),
+        )?;
+
+        let total_albums: i64 = conn.query_row("SELECT count(*) FROM albums;", [], |row| row.get(0))?;
+        let total_tags: i64 = conn.query_row("SELECT count(*) FROM tags;", [], |row| row.get(0))?;
+
+        Ok(LibraryStats {
+            total_files,
+            total_photos,
+            total_videos,
+            total_size_bytes,
+            total_geotagged,
+            total_favorites,
+            total_albums,
+            total_tags,
+        })
     }
 
     // --------------------------------------------------------------------------
@@ -989,53 +1041,29 @@ mod tests {
 
         let q_video = MediaFilterQuery {
             media_type: Some("video".to_string()),
-            query_text: None,
-            date_from: None,
-            date_to: None,
-            camera_make: None,
-            has_gps_only: None,
-            is_favorite_only: None,
-            min_rating: None,
-            album_id: None,
-            tag_id: None,
             limit: Some(10),
             offset: Some(0),
+            ..Default::default()
         };
         let res_video = MediaRepository::search_media(&conn, &q_video).unwrap();
         assert_eq!(res_video.len(), 1);
         assert_eq!(res_video[0].file_name, "city_night.mp4");
 
         let q_text = MediaFilterQuery {
-            media_type: None,
             query_text: Some("beach".to_string()),
-            date_from: None,
-            date_to: None,
-            camera_make: None,
-            has_gps_only: None,
-            is_favorite_only: None,
-            min_rating: None,
-            album_id: None,
-            tag_id: None,
             limit: Some(10),
             offset: Some(0),
+            ..Default::default()
         };
         let res_text = MediaRepository::search_media(&conn, &q_text).unwrap();
         assert_eq!(res_text.len(), 1);
         assert_eq!(res_text[0].file_name, "sunset_beach.jpg");
 
         let q_gps = MediaFilterQuery {
-            media_type: None,
-            query_text: None,
-            date_from: None,
-            date_to: None,
-            camera_make: None,
             has_gps_only: Some(true),
-            is_favorite_only: None,
-            min_rating: None,
-            album_id: None,
-            tag_id: None,
             limit: Some(10),
             offset: Some(0),
+            ..Default::default()
         };
         let res_gps = MediaRepository::search_media(&conn, &q_gps).unwrap();
         assert_eq!(res_gps.len(), 1);
@@ -1244,6 +1272,57 @@ mod tests {
         let remaining = MediaRepository::query_media_paged(&conn, 10, 0).unwrap();
         assert_eq!(remaining.len(), 1);
         assert_eq!(remaining[0].id.unwrap(), ids[2]);
+    }
+
+    #[test]
+    fn test_dynamic_sorting_and_library_stats() {
+        let mut conn = setup_test_db();
+        let mut item_a = create_test_item(1, "aaa_first.jpg", "h_a", None, None, Some(1720000000000), "photo");
+        item_a.file_size = 1000;
+        item_a.rating = 2;
+        let mut item_b = create_test_item(1, "zzz_second.mp4", "h_b", Some(37.77), Some(-122.41), Some(1720000050000), "video");
+        item_b.file_size = 5000;
+        item_b.rating = 5;
+
+        MediaRepository::insert_batch(&mut conn, &[item_a, item_b]).unwrap();
+
+        // Sort by name ASC
+        let sorted_name_asc = MediaRepository::search_media(&conn, &MediaFilterQuery {
+            sort_by: Some("name".into()),
+            sort_order: Some("asc".into()),
+            ..Default::default()
+        }).unwrap();
+        assert_eq!(sorted_name_asc[0].file_name, "aaa_first.jpg");
+
+        // Sort by name DESC
+        let sorted_name_desc = MediaRepository::search_media(&conn, &MediaFilterQuery {
+            sort_by: Some("name".into()),
+            sort_order: Some("desc".into()),
+            ..Default::default()
+        }).unwrap();
+        assert_eq!(sorted_name_desc[0].file_name, "zzz_second.mp4");
+
+        // Sort by size DESC
+        let sorted_size_desc = MediaRepository::search_media(&conn, &MediaFilterQuery {
+            sort_by: Some("size".into()),
+            sort_order: Some("desc".into()),
+            ..Default::default()
+        }).unwrap();
+        assert_eq!(sorted_size_desc[0].file_size, 5000);
+
+        // Orientation
+        let first_id = sorted_name_asc[0].id.unwrap();
+        MediaRepository::set_media_orientation(&conn, first_id, 90).unwrap();
+        let item_updated = MediaRepository::get_by_id(&conn, first_id).unwrap().unwrap();
+        assert_eq!(item_updated.orientation, 90);
+
+        // Library Stats
+        let stats = MediaRepository::get_library_stats(&conn).unwrap();
+        assert_eq!(stats.total_files, 2);
+        assert_eq!(stats.total_photos, 1);
+        assert_eq!(stats.total_videos, 1);
+        assert_eq!(stats.total_size_bytes, 6000);
+        assert_eq!(stats.total_geotagged, 1);
     }
 }
 

@@ -57,6 +57,12 @@ interface LibraryState {
   setDuplicateModalOpen: (open: boolean) => void;
   clearFilters: () => void;
 
+  // Sorting state
+  sortBy: 'date' | 'name' | 'size' | 'rating';
+  sortOrder: 'asc' | 'desc';
+  setSort: (by: 'date' | 'name' | 'size' | 'rating', order?: 'asc' | 'desc') => void;
+  toggleSortOrder: () => void;
+
   setGalleryColumns: (cols: number) => void;
   setSelectionMode: (active: boolean) => void;
   toggleMediaSelection: (id: number) => void;
@@ -119,6 +125,9 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   setMediaTypeFilter: (mediaTypeFilter) => set({ mediaTypeFilter }),
   incrementSyncRevision: () => set((state) => ({ syncRevision: state.syncRevision + 1 })),
 
+  sortBy: 'date',
+  sortOrder: 'desc',
+
   setSearchQuery: (searchQuery) => set({ searchQuery }),
   setHasGpsOnly: (hasGpsOnly) => set({ hasGpsOnly }),
   setIsFavoriteOnly: (isFavoriteOnly) => set({ isFavoriteOnly }),
@@ -127,6 +136,13 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   setSelectedTagId: (selectedTagId) => set({ selectedTagId }),
   setDateRange: (dateFrom, dateTo) => set({ dateFrom, dateTo }),
   setDuplicateModalOpen: (isDuplicateModalOpen) => set({ isDuplicateModalOpen }),
+  setSort: (by, order) =>
+    set({
+      sortBy: by,
+      sortOrder: order || (get().sortBy === by ? (get().sortOrder === 'asc' ? 'desc' : 'asc') : 'desc'),
+    }),
+  toggleSortOrder: () =>
+    set((state) => ({ sortOrder: state.sortOrder === 'asc' ? 'desc' : 'asc' })),
   clearFilters: () =>
     set({
       searchQuery: '',
@@ -138,6 +154,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
       dateFrom: null,
       dateTo: null,
       mediaTypeFilter: 'all',
+      sortBy: 'date',
+      sortOrder: 'desc',
     }),
 
   setGalleryColumns: (cols: number) => {

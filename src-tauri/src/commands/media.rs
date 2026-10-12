@@ -3,7 +3,7 @@ use tauri::State;
 use super::indexing::AppState;
 use crate::db::{DatabaseManager, MediaRepository};
 use crate::models::{
-    Album, DuplicateGroup, MediaFilterQuery, MediaItem, SpatialBoundingBox, SpatialClusterPoint,
+    Album, DuplicateGroup, LibraryStats, MediaFilterQuery, MediaItem, SpatialBoundingBox, SpatialClusterPoint,
     Tag, TimelineGroup,
 };
 
@@ -293,6 +293,53 @@ pub fn batch_add_media_to_album(
         .map_err(|e| format!("Failed to open DB: {}", e))?;
     MediaRepository::batch_add_media_to_album(&mut conn, album_id, &media_ids).map_err(|e| e.to_string())
 }
+
+#[tauri::command]
+pub fn get_library_stats(
+    state: State<'_, AppState>,
+) -> Result<LibraryStats, String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::get_library_stats(&conn).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn set_media_orientation(
+    state: State<'_, AppState>,
+    id: i64,
+    orientation: u32,
+) -> Result<(), String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::set_media_orientation(&conn, id, orientation).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn export_media_files(
+    source_paths: Vec<String>,
+    destination_folder: String,
+) -> Result<u32, String> {
+    use std::path::Path;
+    let dest = Path::new(&destination_folder);
+    if !dest.exists() {
+        std::fs::create_dir_all(dest).map_err(|e| format!("Failed to create destination folder: {}", e))?;
+    }
+
+    let mut copied = 0u32;
+    for path_str in source_paths {
+        let src = Path::new(&path_str);
+        if src.exists() && src.is_file() {
+            if let Some(name) = src.file_name() {
+                let target = dest.join(name);
+                if std::fs::copy(src, target).is_ok() {
+                    copied += 1;
+                }
+            }
+        }
+    }
+    Ok(copied)
+}
+
 
 
 

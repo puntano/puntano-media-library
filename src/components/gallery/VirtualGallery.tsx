@@ -16,8 +16,11 @@ import {
   AlertTriangle,
   X,
   Plus,
+  Copy,
+  Download,
 } from 'lucide-react';
-import { tauriApi } from '../../services/tauriApi';
+import { open } from '@tauri-apps/plugin-dialog';
+import { tauriApi, isTauri } from '../../services/tauriApi';
 import { MediaItem, MediaFilterQuery, Tag } from '../../types/media';
 import { useLibraryStore } from '../../stores/libraryStore';
 import { MediaThumbnail } from '../common/MediaThumbnail';
@@ -31,13 +34,15 @@ export const VirtualGallery: React.FC = () => {
   const [isLoading, setIsLoading] = useState<boolean>(false);
   const [hasMore, setHasMore] = useState<boolean>(true);
 
-  // Modals for batch actions
+  // Modals and feedback for batch actions
   const [showBatchAlbum, setShowBatchAlbum] = useState<boolean>(false);
   const [showBatchTag, setShowBatchTag] = useState<boolean>(false);
   const [showBatchDelete, setShowBatchDelete] = useState<boolean>(false);
   const [isBatchProcessing, setIsBatchProcessing] = useState<boolean>(false);
   const [availableTags, setAvailableTags] = useState<Tag[]>([]);
   const [newTagInput, setNewTagInput] = useState<string>('');
+  const [isCopiedFeedback, setIsCopiedFeedback] = useState<boolean>(false);
+  const [batchStatusFeedback, setBatchStatusFeedback] = useState<string | null>(null);
 
   const isLoadingRef = useRef(false);
   const hasMoreRef = useRef(true);
@@ -69,6 +74,8 @@ export const VirtualGallery: React.FC = () => {
     toggleMediaSelection,
     selectAllMedia,
     clearMediaSelection,
+    sortBy,
+    sortOrder,
   } = useLibraryStore();
 
   const selectedSet = useMemo(() => new Set(selectedMediaIds), [selectedMediaIds]);
@@ -82,7 +89,9 @@ export const VirtualGallery: React.FC = () => {
     selectedTagId !== null ||
     dateFrom !== null ||
     dateTo !== null ||
-    mediaTypeFilter !== 'all';
+    mediaTypeFilter !== 'all' ||
+    sortBy !== 'date' ||
+    sortOrder !== 'desc';
 
   const loadMediaBatch = useCallback(
     async (offset: number, append: boolean = false) => {
@@ -104,6 +113,8 @@ export const VirtualGallery: React.FC = () => {
             min_rating: minRating > 0 ? minRating : undefined,
             album_id: selectedAlbumId || undefined,
             tag_id: selectedTagId || undefined,
+            sort_by: sortBy,
+            sort_order: sortOrder,
             limit: PAGE_SIZE,
             offset,
           };
@@ -143,6 +154,8 @@ export const VirtualGallery: React.FC = () => {
       minRating,
       selectedAlbumId,
       selectedTagId,
+      sortBy,
+      sortOrder,
       setTotalMediaCount,
     ]
   );
@@ -241,6 +254,69 @@ export const VirtualGallery: React.FC = () => {
     }
   };
 
+  const handleCopySelectedPaths = async () => {
+    if (selectedMediaIds.length === 0) return;
+    const paths = items
+      .filter((i) => selectedSet.has(i.id))
+      .map((i) => i.file_path);
+    if (paths.length === 0) return;
+
+    try {
+      await navigator.clipboard.writeText(paths.join('\n'));
+      setIsCopiedFeedback(true);
+      setBatchStatusFeedback(`Copied ${paths.length} file ${paths.length === 1 ? 'path' : 'paths'} to clipboard`);
+      setTimeout(() => {
+        setIsCopiedFeedback(false);
+        setBatchStatusFeedback(null);
+      }, 3000);
+    } catch (err) {
+      console.error('Failed to copy paths to clipboard:', err);
+    }
+  };
+
+  const handleExportSelected = async () => {
+    if (selectedMediaIds.length === 0 || isBatchProcessing) return;
+    const paths = items
+      .filter((i) => selectedSet.has(i.id))
+      .map((i) => i.file_path);
+    if (paths.length === 0) return;
+
+    let destinationFolder: string | null = null;
+    if (isTauri()) {
+      try {
+        const selected = await open({
+          directory: true,
+          multiple: false,
+          title: 'Select Destination Folder for Export',
+        });
+        if (selected && typeof selected === 'string') {
+          destinationFolder = selected;
+        }
+      } catch (err) {
+        console.error('Folder picker error:', err);
+        return;
+      }
+    } else {
+      destinationFolder = prompt('Enter export destination folder path:');
+    }
+
+    if (!destinationFolder) return;
+
+    setIsBatchProcessing(true);
+    setBatchStatusFeedback('Exporting selected files...');
+    try {
+      const exportedCount = await tauriApi.exportMediaFiles(paths, destinationFolder);
+      setBatchStatusFeedback(`Exported ${exportedCount} ${exportedCount === 1 ? 'file' : 'files'} to ${destinationFolder}`);
+      setTimeout(() => setBatchStatusFeedback(null), 4000);
+    } catch (err) {
+      console.error('Export failed:', err);
+      setBatchStatusFeedback('Export failed. Check disk permissions.');
+      setTimeout(() => setBatchStatusFeedback(null), 4000);
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
   // Keyboard shortcuts in Gallery
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -275,6 +351,8 @@ export const VirtualGallery: React.FC = () => {
     dateFrom,
     dateTo,
     mediaTypeFilter,
+    sortBy,
+    sortOrder,
     syncRevision,
     loadMediaBatch,
   ]);
@@ -690,6 +768,27 @@ export const VirtualGallery: React.FC = () => {
 
           <button
             className="btn-secondary"
+            onClick={handleCopySelectedPaths}
+            style={{ padding: '6px 12px', fontSize: '0.75rem', gap: 5 }}
+            title="Copy absolute file paths of selected items to clipboard"
+          >
+            {isCopiedFeedback ? <Check size={13} color="var(--status-success)" /> : <Copy size={13} />}
+            {isCopiedFeedback ? 'Copied!' : 'Copy Paths'}
+          </button>
+
+          <button
+            className="btn-secondary"
+            onClick={handleExportSelected}
+            disabled={isBatchProcessing}
+            style={{ padding: '6px 12px', fontSize: '0.75rem', gap: 5 }}
+            title="Export copies of selected items to a folder"
+          >
+            <Download size={13} />
+            Export
+          </button>
+
+          <button
+            className="btn-secondary"
             onClick={() => handleBatchFavorite(true)}
             style={{ padding: '6px 12px', fontSize: '0.75rem', gap: 5 }}
             title="Mark all selected as favorite"
@@ -754,6 +853,35 @@ export const VirtualGallery: React.FC = () => {
           >
             <X size={16} />
           </button>
+        </div>
+      )}
+
+      {/* Floating Status Notification */}
+      {batchStatusFeedback && (
+        <div
+          className="glass-panel"
+          style={{
+            position: 'fixed',
+            bottom: 84,
+            left: '50%',
+            transform: 'translateX(-50%)',
+            zIndex: 110,
+            borderRadius: 999,
+            padding: '8px 20px',
+            backgroundColor: 'rgba(15, 23, 42, 0.95)',
+            boxShadow: 'var(--shadow-xl)',
+            border: '1px solid var(--accent-primary)',
+            color: '#ffffff',
+            fontSize: '0.8rem',
+            fontWeight: 600,
+            display: 'flex',
+            alignItems: 'center',
+            gap: 8,
+            animation: 'fadeIn 0.2s ease',
+          }}
+        >
+          <Check size={14} color="var(--accent-primary)" />
+          <span>{batchStatusFeedback}</span>
         </div>
       )}
 

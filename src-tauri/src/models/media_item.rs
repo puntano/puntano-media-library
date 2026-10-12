@@ -127,3 +127,16 @@ pub struct LibraryInfo {
     pub total_files: i64,
     pub created_at: i64,
 }
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LibraryStats {
+    pub total_files: i64,
+    pub total_photos: i64,
+    pub total_videos: i64,
+    pub total_size_bytes: i64,
+    pub total_geotagged: i64,
+    pub total_favorites: i64,
+    pub total_albums: i64,
+    pub total_tags: i64,
+}
+

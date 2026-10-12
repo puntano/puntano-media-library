@@ -107,6 +107,8 @@ export interface MediaFilterQuery {
   min_rating?: number;
   album_id?: number;
   tag_id?: number;
+  sort_by?: 'date' | 'name' | 'size' | 'rating';
+  sort_order?: 'asc' | 'desc';
   limit?: number;
   offset?: number;
 }
@@ -119,3 +121,15 @@ export interface LibraryInfo {
   total_files: number;
   created_at: number;
 }
+
+export interface LibraryStats {
+  total_files: number;
+  total_photos: number;
+  total_videos: number;
+  total_size_bytes: number;
+  total_geotagged: number;
+  total_favorites: number;
+  total_albums: number;
+  total_tags: number;
+}
+

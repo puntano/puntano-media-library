@@ -1,8 +1,9 @@
-import React, { useEffect, useState, useRef } from 'react';
+import React, { useEffect, useState, useRef, useCallback } from 'react';
 import {
   ZoomIn,
   ZoomOut,
   RotateCcw,
+  RotateCw,
   Info,
   X,
   ChevronLeft,
@@ -12,7 +13,7 @@ import {
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useLibraryStore } from '../../stores/libraryStore';
 import { getThumbnailUrl } from '../../services/thumbnailProtocol';
-import { isTauri } from '../../services/tauriApi';
+import { tauriApi, isTauri } from '../../services/tauriApi';
 
 export const LightboxModal: React.FC = () => {
   const {
@@ -25,18 +26,41 @@ export const LightboxModal: React.FC = () => {
   } = useLibraryStore();
 
   const [zoom, setZoom] = useState<number>(1);
+  const [rotation, setRotation] = useState<number>(0);
   const [isPlayingVideo, setIsPlayingVideo] = useState<boolean>(false);
   const [isFullResLoaded, setIsFullResLoaded] = useState<boolean>(false);
   const videoRef = useRef<HTMLVideoElement>(null);
 
   const activeItem = lightboxIndex !== null ? lightboxItems[lightboxIndex] : null;
 
-  // Reset zoom & loading states on item change
+  // Reset zoom, loading and initialize rotation from item orientation on item change
   useEffect(() => {
     setZoom(1);
     setIsPlayingVideo(false);
     setIsFullResLoaded(false);
-  }, [lightboxIndex]);
+    const o = activeItem?.orientation ?? 1;
+    const initialDeg =
+      o === 6 || o === 90 ? 90 :
+      o === 3 || o === 180 ? 180 :
+      o === 8 || o === 270 ? 270 : 0;
+    setRotation(initialDeg);
+  }, [lightboxIndex, activeItem]);
+
+  const handleRotateCw = useCallback(async () => {
+    if (!activeItem || activeItem.media_type !== 'photo') return;
+    const nextDeg = (rotation + 90) % 360;
+    setRotation(nextDeg);
+    const exifOrientation =
+      nextDeg === 90 ? 6 :
+      nextDeg === 180 ? 3 :
+      nextDeg === 270 ? 8 : 1;
+    activeItem.orientation = exifOrientation;
+    try {
+      await tauriApi.setMediaOrientation(activeItem.id, exifOrientation);
+    } catch (err) {
+      console.error('Failed to save media orientation:', err);
+    }
+  }, [activeItem, rotation]);
 
   // Next & previous media prefetching for zero-latency transitions
   useEffect(() => {
@@ -67,6 +91,8 @@ export const LightboxModal: React.FC = () => {
         nextLightboxItem();
       } else if (e.key === 'ArrowLeft') {
         prevLightboxItem();
+      } else if ((e.key === 'r' || e.key === 'R') && activeItem?.media_type === 'photo') {
+        handleRotateCw();
       } else if (e.key === ' ' && activeItem?.media_type === 'video') {
         e.preventDefault();
         if (videoRef.current) {
@@ -89,7 +115,7 @@ export const LightboxModal: React.FC = () => {
 
     window.addEventListener('keydown', handleKeyDown);
     return () => window.removeEventListener('keydown', handleKeyDown);
-  }, [lightboxIndex, closeLightbox, nextLightboxItem, prevLightboxItem, activeItem]);
+  }, [lightboxIndex, closeLightbox, nextLightboxItem, prevLightboxItem, activeItem, handleRotateCw]);
 
   if (!activeItem || lightboxIndex === null) return null;
 
@@ -209,6 +235,18 @@ export const LightboxModal: React.FC = () => {
             </div>
           )}
 
+          {activeItem.media_type === 'photo' && (
+            <button
+              className="btn-secondary"
+              onClick={handleRotateCw}
+              style={{ fontSize: '0.8rem', padding: '6px 12px', gap: 6 }}
+              title="Rotate 90° Clockwise (R)"
+            >
+              <RotateCw size={14} />
+              Rotate
+            </button>
+          )}
+
           <button className="btn-secondary" onClick={handleInspect} style={{ fontSize: '0.8rem', padding: '6px 12px', gap: 6 }}>
             <Info size={14} />
             Metadata
@@ -305,8 +343,8 @@ export const LightboxModal: React.FC = () => {
             alignItems: 'center',
             justifyContent: 'center',
             position: 'relative',
-            transition: 'transform 0.15s ease-out',
-            transform: `scale(${zoom})`,
+            transition: 'transform 0.2s cubic-bezier(0.2, 0, 0, 1)',
+            transform: `scale(${zoom}) rotate(${rotation}deg)`,
           }}
         >
           {activeItem.media_type === 'video' ? (

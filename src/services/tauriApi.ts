@@ -9,6 +9,7 @@ import {
   DuplicateGroup,
   Album,
   Tag,
+  LibraryStats,
 } from '../types/media';
 
 // Check if running inside native Tauri runtime
@@ -411,6 +412,39 @@ export const tauriApi = {
     }
     await invoke('batch_add_media_to_album', { albumId, mediaIds });
   },
+
+  async getLibraryStats(): Promise<LibraryStats> {
+    if (!isTauri()) {
+      return {
+        total_files: 12480,
+        total_photos: 10240,
+        total_videos: 2240,
+        total_size_bytes: 42 * 1024 * 1024 * 1024,
+        total_geotagged: 8960,
+        total_favorites: 420,
+        total_albums: 12,
+        total_tags: 18,
+      };
+    }
+    return await invoke<LibraryStats>('get_library_stats');
+  },
+
+  async setMediaOrientation(id: number, orientation: number): Promise<void> {
+    if (!isTauri()) {
+      console.warn('[Mock] setMediaOrientation:', id, orientation);
+      return;
+    }
+    await invoke('set_media_orientation', { id, orientation });
+  },
+
+  async exportMediaFiles(sourcePaths: string[], destinationFolder: string): Promise<number> {
+    if (!isTauri()) {
+      console.warn('[Mock] exportMediaFiles to:', destinationFolder, sourcePaths.length);
+      return sourcePaths.length;
+    }
+    return await invoke<number>('export_media_files', { sourcePaths, destinationFolder });
+  },
+
 
 
   onIndexingProgress(callback: (event: IndexingProgressEvent) => void): Promise<UnlistenFn> {
