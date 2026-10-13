@@ -133,3 +133,16 @@ export interface LibraryStats {
   total_tags: number;
 }
 
+export interface DiagnosticReport {
+  app_version: string;
+  os_name: string;
+  os_family: string;
+  arch: string;
+  db_path: string;
+  db_size_bytes: number;
+  log_file_path: string;
+  total_libraries: number;
+  total_media_files: number;
+  recent_logs: string[];
+}
+

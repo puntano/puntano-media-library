@@ -10,6 +10,7 @@ import {
   Settings,
   Copy,
   Keyboard,
+  Terminal,
 } from 'lucide-react';
 import { useLibraryStore } from './stores/libraryStore';
 import { tauriApi } from './services/tauriApi';
@@ -24,6 +25,7 @@ import { LightboxModal } from './components/viewer/LightboxModal';
 import { LibrarySettingsModal } from './components/settings/LibrarySettingsModal';
 import { DuplicatesModal } from './components/duplicates/DuplicatesModal';
 import { KeyboardShortcutsModal } from './components/common/KeyboardShortcutsModal';
+import { DiagnosticModal } from './components/settings/DiagnosticModal';
 
 export const App: React.FC = () => {
   const {
@@ -41,6 +43,7 @@ export const App: React.FC = () => {
   } = useLibraryStore();
   const [showIndexModal, setShowIndexModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
+  const [showDiagnosticModal, setShowDiagnosticModal] = useState(false);
 
   // Initialize total count on launch
   useEffect(() => {
@@ -301,6 +304,16 @@ export const App: React.FC = () => {
             <Settings size={16} />
           </button>
 
+          {/* System Diagnostics & Logs */}
+          <button
+            className="btn-secondary"
+            onClick={() => setShowDiagnosticModal(true)}
+            title="System Diagnostics & Logs"
+            style={{ padding: '8px 10px' }}
+          >
+            <Terminal size={16} />
+          </button>
+
           {/* Indexing Trigger Button */}
           <button className="btn-primary" onClick={() => setShowIndexModal(true)} style={{ gap: 6 }}>
             <Plus size={16} />
@@ -332,6 +345,11 @@ export const App: React.FC = () => {
           onClose={() => setShowSettingsModal(false)}
           onOpenIndexModal={() => setShowIndexModal(true)}
         />
+      )}
+
+      {/* System Diagnostics & Logs Modal */}
+      {showDiagnosticModal && (
+        <DiagnosticModal onClose={() => setShowDiagnosticModal(false)} />
       )}
 
       {/* Keyboard Shortcuts Modal */}

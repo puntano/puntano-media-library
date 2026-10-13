@@ -10,6 +10,7 @@ import {
   Album,
   Tag,
   LibraryStats,
+  DiagnosticReport,
 } from '../types/media';
 
 // Check if running inside native Tauri runtime
@@ -443,6 +444,60 @@ export const tauriApi = {
       return sourcePaths.length;
     }
     return await invoke<number>('export_media_files', { sourcePaths, destinationFolder });
+  },
+
+  async getLogs(maxLines?: number): Promise<string[]> {
+    if (!isTauri()) {
+      return [
+        '2026-10-13 11:30:00 [INFO ] [puntano_engine] Application running in web browser mock mode',
+        '2026-10-13 11:30:01 [INFO ] [db::connection] In-memory SQLite initialized',
+      ];
+    }
+    return await invoke<string[]>('get_logs', { maxLines });
+  },
+
+  async getLogFilePath(): Promise<string> {
+    if (!isTauri()) {
+      return '/mock/app_data/logs/puntano.log';
+    }
+    return await invoke<string>('get_log_file_path');
+  },
+
+  async openLogFolder(): Promise<void> {
+    if (!isTauri()) {
+      console.warn('[Mock] openLogFolder called');
+      return;
+    }
+    await invoke('open_log_folder');
+  },
+
+  async exportLogs(destinationPath: string): Promise<string> {
+    if (!isTauri()) {
+      console.warn('[Mock] exportLogs to:', destinationPath);
+      return destinationPath;
+    }
+    return await invoke<string>('export_logs', { destinationPath });
+  },
+
+  async getDiagnosticReport(): Promise<DiagnosticReport> {
+    if (!isTauri()) {
+      return {
+        app_version: '0.3.0',
+        os_name: 'windows',
+        os_family: 'windows',
+        arch: 'x86_64',
+        db_path: 'C:\\Users\\Mock\\AppData\\Roaming\\puntano\\puntano.db',
+        db_size_bytes: 48500000,
+        log_file_path: 'C:\\Users\\Mock\\AppData\\Roaming\\puntano\\logs\\puntano.log',
+        total_libraries: 2,
+        total_media_files: 12480,
+        recent_logs: [
+          '2026-10-13 11:30:00 [INFO ] [lib] SQLite initialized with R*Tree support',
+          '2026-10-13 11:30:01 [INFO ] [indexer] Discovery complete: 12,480 files found',
+        ],
+      };
+    }
+    return await invoke<DiagnosticReport>('get_diagnostic_report');
   },
 
 

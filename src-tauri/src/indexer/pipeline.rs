@@ -72,6 +72,12 @@ impl IndexingPipeline {
     {
         let start_time = Instant::now();
 
+        log::info!(
+            "Beginning indexing pipeline for library {}, root_dir: '{}'",
+            library_id,
+            root_dir
+        );
+
         // 1. Stage 1: Fast Filesystem Discovery
         progress_callback(IndexingProgressEvent {
             stage: "discovering".into(),
@@ -82,10 +88,33 @@ impl IndexingPipeline {
             elapsed_ms: start_time.elapsed().as_millis() as u64,
         });
 
-        let discovered = DirectoryWalker::walk(root_dir);
+        let discovered = DirectoryWalker::walk_with_progress(
+            root_dir,
+            Some(cancel_token.clone()),
+            |current_dir, count| {
+                progress_callback(IndexingProgressEvent {
+                    stage: "discovering".into(),
+                    scanned_files: count as u64,
+                    indexed_files: 0,
+                    current_directory: current_dir.to_string(),
+                    is_complete: false,
+                    elapsed_ms: start_time.elapsed().as_millis() as u64,
+                });
+            },
+        )?;
+
+        if cancel_token.load(Ordering::Relaxed) {
+            log::info!("Indexing cancelled during discovery phase.");
+            return Ok(0);
+        }
+
         let total_discovered = discovered.len() as u64;
 
         if total_discovered == 0 {
+            log::info!(
+                "Discovery completed for '{}': 0 supported media files found.",
+                root_dir
+            );
             progress_callback(IndexingProgressEvent {
                 stage: "completed".into(),
                 scanned_files: 0,
@@ -96,6 +125,13 @@ impl IndexingPipeline {
             });
             return Ok(0);
         }
+
+        log::info!(
+            "Discovery complete for '{}': {} files found in {}ms. Starting metadata extraction & SQLite ingestion.",
+            root_dir,
+            total_discovered,
+            start_time.elapsed().as_millis()
+        );
 
         // Bounded channel to prevent uncontrolled memory spikes during large library scans
         let (tx, rx): (Sender<MediaItem>, Receiver<MediaItem>) = bounded(1000);
@@ -154,36 +190,41 @@ impl IndexingPipeline {
                     updated_at: now,
                 };
 
-                // Extract metadata according to media type
-                if file.media_type == "photo" || file.media_type == "raw" {
-                    let p_meta = PhotoMetadataParser::parse(&file.path);
-                    item.width = p_meta.width;
-                    item.height = p_meta.height;
-                    item.orientation = p_meta.orientation;
-                    item.captured_at = p_meta.captured_at;
-                    item.captured_at_local = p_meta.captured_at_local;
-                    item.timezone_offset = p_meta.timezone_offset;
-                    item.latitude = p_meta.latitude;
-                    item.longitude = p_meta.longitude;
-                    item.altitude = p_meta.altitude;
-                    item.camera_make = p_meta.camera_make;
-                    item.camera_model = p_meta.camera_model;
-                    item.lens_model = p_meta.lens_model;
-                    item.focal_length = p_meta.focal_length;
-                    item.aperture = p_meta.aperture;
-                    item.iso = p_meta.iso;
-                    item.exposure_time = p_meta.exposure_time;
-                } else if file.media_type == "video" {
-                    let v_meta = VideoMetadataParser::parse(&file.path);
-                    item.width = v_meta.width;
-                    item.height = v_meta.height;
-                    item.duration = v_meta.duration;
-                    item.captured_at = v_meta.captured_at;
-                    item.captured_at_local = v_meta.captured_at_local;
-                    item.latitude = v_meta.latitude;
-                    item.longitude = v_meta.longitude;
-                    item.altitude = v_meta.altitude;
-                }
+                let file_path = file.path.clone();
+                let media_type = file.media_type.clone();
+
+                // Safe wrapper to prevent any potential third-party parser panic from crashing threads
+                let _ = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                    if media_type == "photo" || media_type == "raw" {
+                        let p_meta = PhotoMetadataParser::parse(&file_path);
+                        item.width = p_meta.width;
+                        item.height = p_meta.height;
+                        item.orientation = p_meta.orientation;
+                        item.captured_at = p_meta.captured_at;
+                        item.captured_at_local = p_meta.captured_at_local;
+                        item.timezone_offset = p_meta.timezone_offset;
+                        item.latitude = p_meta.latitude;
+                        item.longitude = p_meta.longitude;
+                        item.altitude = p_meta.altitude;
+                        item.camera_make = p_meta.camera_make;
+                        item.camera_model = p_meta.camera_model;
+                        item.lens_model = p_meta.lens_model;
+                        item.focal_length = p_meta.focal_length;
+                        item.aperture = p_meta.aperture;
+                        item.iso = p_meta.iso;
+                        item.exposure_time = p_meta.exposure_time;
+                    } else if media_type == "video" {
+                        let v_meta = VideoMetadataParser::parse(&file_path);
+                        item.width = v_meta.width;
+                        item.height = v_meta.height;
+                        item.duration = v_meta.duration;
+                        item.captured_at = v_meta.captured_at;
+                        item.captured_at_local = v_meta.captured_at_local;
+                        item.latitude = v_meta.latitude;
+                        item.longitude = v_meta.longitude;
+                        item.altitude = v_meta.altitude;
+                    }
+                }));
 
                 // Compute coarse geohash if coordinates present
                 if let (Some(lat), Some(lon)) = (item.latitude, item.longitude) {
@@ -242,6 +283,13 @@ impl IndexingPipeline {
             }
             total_indexed += batch.len() as u64;
         }
+
+        log::info!(
+            "Indexing pipeline successfully completed for library {}: {} items indexed in {}ms.",
+            library_id,
+            total_indexed,
+            start_time.elapsed().as_millis()
+        );
 
         // Final completion event
         progress_callback(IndexingProgressEvent {

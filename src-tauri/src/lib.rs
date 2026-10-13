@@ -1,6 +1,7 @@
 pub mod commands;
 pub mod db;
 pub mod indexer;
+pub mod logger;
 pub mod metadata;
 pub mod models;
 pub mod thumbnails;
@@ -17,6 +18,24 @@ use thumbnails::{ThumbnailCache, ThumbnailWorker};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
+    // Global panic hook: logs any panic to file even if the thread unwinds
+    std::panic::set_hook(Box::new(|info| {
+        let loc = info
+            .location()
+            .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
+            .unwrap_or_else(|| "unknown".into());
+        let payload = if let Some(s) = info.payload().downcast_ref::<&str>() {
+            s.to_string()
+        } else if let Some(s) = info.payload().downcast_ref::<String>() {
+            s.clone()
+        } else {
+            "Unknown panic payload".to_string()
+        };
+        let panic_msg = format!("FATAL UNCAUGHT PANIC at {}: {}", loc, payload);
+        eprintln!("{}", panic_msg);
+        crate::logger::log_panic(&panic_msg);
+    }));
+
     let cancel_token = Arc::new(AtomicBool::new(false));
     let cancel_worker = cancel_token.clone();
 
@@ -85,6 +104,10 @@ pub fn run() {
                 fs::create_dir_all(&app_cache_dir).expect("Failed to create app cache dir");
             }
 
+            // Initialize persistent file logger in app_data_dir/logs/
+            let log_dir = app_data_dir.join("logs");
+            let _ = crate::logger::init(&log_dir);
+
             let db_path = app_data_dir.join("puntano.db");
 
             // Initialize database schema and verify R*Tree virtual table support (runs migrations ONCE at startup)
@@ -95,9 +118,9 @@ pub fn run() {
                 .unwrap_or(false);
             
             if rtree_ok {
-                println!("[Puntano Engine] SQLite initialized with R*Tree spatial indexing support enabled.");
+                log::info!("[Puntano Engine] SQLite initialized with R*Tree spatial indexing support enabled.");
             } else {
-                eprintln!("[Puntano Engine] WARNING: SQLite R*Tree module was not detected!");
+                log::warn!("[Puntano Engine] WARNING: SQLite R*Tree module was not detected!");
             }
 
             // Spawn background decoupled thumbnail generation daemon
@@ -140,6 +163,11 @@ pub fn run() {
             commands::indexing::remove_library,
             commands::indexing::prune_missing_files,
             commands::indexing::show_in_folder,
+            commands::diagnostics::get_logs,
+            commands::diagnostics::get_log_file_path,
+            commands::diagnostics::open_log_folder,
+            commands::diagnostics::export_logs,
+            commands::diagnostics::get_diagnostic_report,
             commands::media::query_spatial_bounding_box,
             commands::media::query_timeline_groups,
             commands::media::query_media_paged,

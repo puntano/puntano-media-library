@@ -13,10 +13,12 @@ import {
   Image as ImageIcon,
   MapPin,
   Heart,
+  Terminal,
 } from 'lucide-react';
 import { tauriApi } from '../../services/tauriApi';
 import { LibraryInfo, LibraryStats } from '../../types/media';
 import { useLibraryStore } from '../../stores/libraryStore';
+import { DiagnosticModal } from './DiagnosticModal';
 
 interface LibrarySettingsModalProps {
   onClose: () => void;
@@ -32,6 +34,7 @@ export const LibrarySettingsModal: React.FC<LibrarySettingsModalProps> = ({
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [pruningStatus, setPruningStatus] = useState<string | null>(null);
   const [rescanStatus, setRescanStatus] = useState<string | null>(null);
+  const [showDiagnostics, setShowDiagnostics] = useState<boolean>(false);
   const { setTotalMediaCount } = useLibraryStore();
 
   const loadLibraries = async () => {
@@ -504,6 +507,39 @@ export const LibrarySettingsModal: React.FC<LibrarySettingsModalProps> = ({
                 Prune Now
               </button>
             </div>
+
+            {/* Diagnostics & Logs Card */}
+            <div
+              className="glass-panel"
+              style={{
+                marginTop: 12,
+                padding: '16px 20px',
+                borderRadius: 'var(--radius-md)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 16,
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <Terminal size={16} color="var(--accent-primary)" />
+                  System Diagnostics & Application Logs
+                </div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--text-muted)', marginTop: 4, maxWidth: 440 }}>
+                  Inspect operational activity, view recent indexing traces, open the log folder, and copy diagnostic reports to easily report bugs.
+                </div>
+              </div>
+
+              <button
+                className="btn-secondary"
+                onClick={() => setShowDiagnostics(true)}
+                style={{ padding: '8px 14px', fontSize: '0.8rem', whiteSpace: 'nowrap', gap: 6 }}
+              >
+                <Terminal size={13} />
+                View Logs & Diagnostics
+              </button>
+            </div>
           </div>
         </div>
 
@@ -524,6 +560,10 @@ export const LibrarySettingsModal: React.FC<LibrarySettingsModalProps> = ({
           </button>
         </div>
       </div>
+
+      {showDiagnostics && (
+        <DiagnosticModal onClose={() => setShowDiagnostics(false)} />
+      )}
     </div>
   );
 };

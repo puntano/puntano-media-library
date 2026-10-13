@@ -18,6 +18,16 @@ pub async fn start_indexing(
     state: State<'_, AppState>,
     folder_path: String,
 ) -> Result<u64, String> {
+    log::info!("Received indexing request for folder: '{}'", folder_path);
+
+    // Validate and sanitize the directory path up-front
+    let validated_dir = crate::indexer::walker::DirectoryWalker::validate_root_directory(&folder_path)
+        .map_err(|e| {
+            log::error!("Directory validation failed for '{}': {}", folder_path, e);
+            e
+        })?;
+    let canonical_path_str = validated_dir.to_string_lossy().to_string();
+
     state.cancel_token.store(false, Ordering::Relaxed);
     let cancel = state.cancel_token.clone();
     let db_path = state.db_path.clone();
@@ -25,32 +35,48 @@ pub async fn start_indexing(
     // Spawn background task to avoid blocking the Tauri main IPC thread
     tokio::task::spawn_blocking(move || {
         let mut conn = DatabaseManager::open(&db_path)
-            .map_err(|e| format!("Failed to open SQLite database: {}", e))?;
+            .map_err(|e| {
+                let err_msg = format!("Failed to open SQLite database: {}", e);
+                log::error!("{}", err_msg);
+                err_msg
+            })?;
 
         // Ensure library row exists
         conn.execute(
             "INSERT OR IGNORE INTO libraries (path, created_at) VALUES (?1, ?2);",
-            rusqlite::params![folder_path, chrono::Utc::now().timestamp_millis()],
-        ).map_err(|e| e.to_string())?;
+            rusqlite::params![canonical_path_str, chrono::Utc::now().timestamp_millis()],
+        ).map_err(|e| {
+            let err_msg = format!("Failed to insert library record: {}", e);
+            log::error!("{}", err_msg);
+            err_msg
+        })?;
 
         let library_id: i64 = conn.query_row(
             "SELECT id FROM libraries WHERE path = ?1;",
-            rusqlite::params![folder_path],
+            rusqlite::params![canonical_path_str],
             |row| row.get(0),
-        ).map_err(|e| e.to_string())?;
+        ).map_err(|e| {
+            let err_msg = format!("Failed to retrieve library id for '{}': {}", canonical_path_str, e);
+            log::error!("{}", err_msg);
+            err_msg
+        })?;
 
         let pipeline = IndexingPipeline::new(500);
 
         let app_handle = app.clone();
+        let target_dir = canonical_path_str.clone();
         let count = pipeline.run(
             library_id,
-            &folder_path,
+            &target_dir,
             &mut conn,
             cancel,
             move |progress: IndexingProgressEvent| {
                 let _ = app_handle.emit("indexing-progress", progress);
             },
-        )?;
+        ).map_err(|e| {
+            log::error!("Pipeline run failed for '{}': {}", target_dir, e);
+            e
+        })?;
 
         // Update library statistics
         let _ = conn.execute(
@@ -58,10 +84,15 @@ pub async fn start_indexing(
             rusqlite::params![chrono::Utc::now().timestamp_millis(), library_id],
         );
 
+        log::info!("Successfully finished indexing '{}'. Total indexed: {}", canonical_path_str, count);
         Ok(count)
     })
     .await
-    .map_err(|e| format!("Task join error: {}", e))?
+    .map_err(|e| {
+        let join_err = format!("Task join error: {}", e);
+        log::error!("{}", join_err);
+        join_err
+    })?
 }
 
 #[tauri::command]
