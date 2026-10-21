@@ -5,6 +5,7 @@ use std::time::Duration;
 
 use rayon::prelude::*;
 use rusqlite::params;
+use tauri::{AppHandle, Emitter};
 
 use super::cache::ThumbnailCache;
 use super::resizer::ThumbnailResizer;
@@ -18,6 +19,7 @@ struct PendingThumbnailItem {
     file_path: String,
     file_hash: String,
     media_type: String,
+    duration: Option<f64>,
 }
 
 impl ThumbnailWorker {
@@ -25,6 +27,7 @@ impl ThumbnailWorker {
     /// Runs asynchronously and drains the 'pending' queue in parallel across Rayon worker threads
     /// without blocking the UI or main application thread.
     pub fn start_daemon(
+        app_handle: AppHandle,
         db_path: PathBuf,
         cache_dir: PathBuf,
         cancel_token: Arc<AtomicBool>,
@@ -35,7 +38,12 @@ impl ThumbnailWorker {
                 let cache = ThumbnailCache::new(&cache_dir);
 
                 while !cancel_token.load(Ordering::Relaxed) {
-                    let processed_count = Self::process_next_batch(&db_path, &cache, &cancel_token);
+                    let (processed_count, ready_count) =
+                        Self::process_next_batch(&db_path, &cache, &cancel_token);
+
+                    if ready_count > 0 {
+                        let _ = app_handle.emit("thumbnails-ready", ready_count);
+                    }
 
                     if processed_count == 0 {
                         // Sleep if queue is empty
@@ -53,23 +61,23 @@ impl ThumbnailWorker {
         db_path: &Path,
         cache: &ThumbnailCache,
         cancel_token: &Arc<AtomicBool>,
-    ) -> usize {
+    ) -> (usize, usize) {
         let mut conn = match DatabaseManager::open(db_path) {
             Ok(c) => c,
-            Err(_) => return 0,
+            Err(_) => return (0, 0),
         };
 
         // Fetch up to 80 pending items
         let mut items = Vec::new();
         {
             let mut stmt = match conn.prepare(
-                "SELECT id, file_path, file_hash, media_type 
+                "SELECT id, file_path, file_hash, media_type, duration 
                  FROM media_files 
                  WHERE thumbnail_status = 'pending' 
                  LIMIT 80;"
             ) {
                 Ok(s) => s,
-                Err(_) => return 0,
+                Err(_) => return (0, 0),
             };
 
             let rows = stmt.query_map([], |row| {
@@ -78,6 +86,7 @@ impl ThumbnailWorker {
                     file_path: row.get(1)?,
                     file_hash: row.get(2)?,
                     media_type: row.get(3)?,
+                    duration: row.get(4)?,
                 })
             });
 
@@ -89,7 +98,7 @@ impl ThumbnailWorker {
         }
 
         if items.is_empty() {
-            return 0;
+            return (0, 0);
         }
 
         let cancel = cancel_token.clone();
@@ -116,7 +125,7 @@ impl ThumbnailWorker {
                         Err(_) => (item.id, None),
                     }
                 } else if item.media_type == "video" {
-                    match super::video_extractor::VideoKeyframeExtractor::extract_keyframe(&item.file_path, &dst_path, None) {
+                    match super::video_extractor::VideoKeyframeExtractor::extract_keyframe(&item.file_path, &dst_path, item.duration) {
                         Ok(_) => (item.id, Some(rel_path)),
                         Err(_) => (item.id, None),
                     }
@@ -127,6 +136,7 @@ impl ThumbnailWorker {
             .collect();
 
         let total_count = results.len();
+        let ready_count = results.iter().filter(|(_, res)| res.is_some()).count();
 
         // Batch update database in a single fast transaction
         if let Ok(tx) = conn.transaction() {
@@ -155,7 +165,7 @@ impl ThumbnailWorker {
             let _ = tx.commit();
         }
 
-        total_count
+        (total_count, ready_count)
     }
 }
 

@@ -7,6 +7,8 @@ import {
   CheckCircle2,
   ExternalLink,
   ShieldCheck,
+  Sparkles,
+  AlertTriangle,
 } from 'lucide-react';
 import { tauriApi } from '../../services/tauriApi';
 import { DuplicateGroup } from '../../types/media';
@@ -14,10 +16,12 @@ import { MediaThumbnail } from '../common/MediaThumbnail';
 import { useLibraryStore } from '../../stores/libraryStore';
 
 export const DuplicatesModal: React.FC = () => {
-  const { isDuplicateModalOpen, setDuplicateModalOpen, incrementSyncRevision } = useLibraryStore();
+  const { isDuplicateModalOpen, setDuplicateModalOpen, incrementSyncRevision, setTotalMediaCount } = useLibraryStore();
   const [duplicateGroups, setDuplicateGroups] = useState<DuplicateGroup[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [actionMessage, setActionMessage] = useState<string | null>(null);
+  const [showAutoCleanConfirm, setShowAutoCleanConfirm] = useState<boolean>(false);
+  const [isAutoCleaning, setIsAutoCleaning] = useState<boolean>(false);
 
   const loadDuplicates = async () => {
     setIsLoading(true);
@@ -44,10 +48,36 @@ export const DuplicatesModal: React.FC = () => {
     return acc + singleSize * (g.count - 1);
   }, 0);
 
+  const redundantIds = duplicateGroups.flatMap((g) => g.items.slice(1).map((i) => i.id));
+
+  const handleAutoClean = async (deleteFromDisk: boolean) => {
+    if (redundantIds.length === 0 || isAutoCleaning) return;
+    setIsAutoCleaning(true);
+    try {
+      const count = redundantIds.length;
+      await tauriApi.batchDeleteMedia(redundantIds, deleteFromDisk);
+      setShowAutoCleanConfirm(false);
+      setActionMessage(
+        deleteFromDisk
+          ? `Moved ${count} redundant duplicate ${count === 1 ? 'copy' : 'copies'} to Recycle Bin / Trash`
+          : `Removed ${count} redundant duplicate ${count === 1 ? 'copy' : 'copies'} from library index`
+      );
+      incrementSyncRevision();
+      tauriApi.getTotalMediaCount().then(setTotalMediaCount).catch(() => {});
+      await loadDuplicates();
+      setTimeout(() => setActionMessage(null), 5000);
+    } catch (err) {
+      console.error('Failed to auto-clean duplicates:', err);
+      setActionMessage(`Error cleaning duplicates: ${String(err)}`);
+    } finally {
+      setIsAutoCleaning(false);
+    }
+  };
+
   const handleDeleteCopy = async (itemId: number, filePath: string) => {
     if (
       !confirm(
-        `Are you sure you want to permanently delete this duplicate copy from disk?\n\nFile: ${filePath}\n\nThe other copy will remain untouched in your library.`
+        `Move this duplicate copy to the Recycle Bin / Trash?\n\nFile: ${filePath}\n\nThe primary copy will remain untouched in your library.`
       )
     ) {
       return;
@@ -55,8 +85,9 @@ export const DuplicatesModal: React.FC = () => {
 
     try {
       await tauriApi.deleteMediaFile(itemId, true);
-      setActionMessage(`Deleted copy: ${filePath.split(/[/\\]/).pop()}`);
+      setActionMessage(`Moved duplicate copy to Trash: ${filePath.split(/[/\\]/).pop()}`);
       incrementSyncRevision();
+      tauriApi.getTotalMediaCount().then(setTotalMediaCount).catch(() => {});
       await loadDuplicates();
       setTimeout(() => setActionMessage(null), 4000);
     } catch (err) {
@@ -203,15 +234,103 @@ export const DuplicatesModal: React.FC = () => {
                 </div>
               </div>
             </div>
-            <div style={{ textAlign: 'right' }}>
-              <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#f87171' }}>
-                {(totalWastedBytes / (1024 * 1024)).toFixed(1)} MB
+            <div style={{ display: 'flex', alignItems: 'center', gap: 16 }}>
+              <div style={{ textAlign: 'right' }}>
+                <div style={{ fontSize: '1.25rem', fontWeight: 700, color: '#f87171' }}>
+                  {(totalWastedBytes / (1024 * 1024)).toFixed(1)} MB
+                </div>
+                <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
+                  across {redundantIds.length} redundant {redundantIds.length === 1 ? 'copy' : 'copies'}
+                </div>
               </div>
-              <div style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>
-                across {duplicateGroups.reduce((acc, g) => acc + (g.count - 1), 0)} redundant copies
-              </div>
+              {redundantIds.length > 0 && (
+                <button
+                  className="btn-primary"
+                  onClick={() => setShowAutoCleanConfirm(true)}
+                  disabled={isAutoCleaning}
+                  style={{
+                    padding: '8px 14px',
+                    fontSize: '0.8rem',
+                    gap: 6,
+                    whiteSpace: 'nowrap',
+                  }}
+                >
+                  <Sparkles size={14} />
+                  Keep 1 Copy Per Cluster ({redundantIds.length})
+                </button>
+              )}
             </div>
           </div>
+
+          {showAutoCleanConfirm && (
+            <div
+              className="glass-panel"
+              style={{
+                padding: '16px 20px',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid rgba(239, 68, 68, 0.35)',
+                backgroundColor: 'rgba(239, 68, 68, 0.08)',
+                display: 'flex',
+                flexDirection: 'column',
+                gap: 12,
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 8, fontWeight: 700, fontSize: '0.9rem', color: '#fca5a5' }}>
+                  <AlertTriangle size={16} />
+                  Auto-Clean {redundantIds.length} Redundant Duplicate {redundantIds.length === 1 ? 'Copy' : 'Copies'}
+                </div>
+                <button
+                  onClick={() => setShowAutoCleanConfirm(false)}
+                  disabled={isAutoCleaning}
+                  style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
+                >
+                  <X size={15} />
+                </button>
+              </div>
+              <div style={{ fontSize: '0.8rem', color: 'var(--text-secondary)', lineHeight: 1.45 }}>
+                The primary copy in each of the {duplicateGroups.length} duplicate clusters will be kept safe. How would you like to clean the {redundantIds.length} redundant copies?
+              </div>
+              <div style={{ display: 'flex', gap: 10, justifyContent: 'flex-end' }}>
+                <button
+                  className="btn-secondary"
+                  disabled={isAutoCleaning}
+                  onClick={() => setShowAutoCleanConfirm(false)}
+                  style={{ padding: '6px 12px', fontSize: '0.78rem' }}
+                >
+                  Cancel
+                </button>
+                <button
+                  className="btn-secondary"
+                  disabled={isAutoCleaning}
+                  onClick={() => handleAutoClean(false)}
+                  style={{ padding: '6px 12px', fontSize: '0.78rem' }}
+                >
+                  Remove from Library Index Only
+                </button>
+                <button
+                  disabled={isAutoCleaning}
+                  onClick={() => handleAutoClean(true)}
+                  style={{
+                    padding: '6px 14px',
+                    fontSize: '0.78rem',
+                    fontWeight: 700,
+                    borderRadius: 'var(--radius-sm)',
+                    border: '1px solid rgba(239, 68, 68, 0.45)',
+                    backgroundColor: 'rgba(239, 68, 68, 0.2)',
+                    color: '#fca5a5',
+                    cursor: isAutoCleaning ? 'not-allowed' : 'pointer',
+                    display: 'flex',
+                    alignItems: 'center',
+                    gap: 6,
+                  }}
+                >
+                  <Trash2 size={13} />
+                  {isAutoCleaning ? 'Cleaning...' : 'Move Redundant Copies to Trash'}
+                </button>
+              </div>
+            </div>
+          )}
 
           {isLoading ? (
             <div style={{ padding: 40, textAlign: 'center', color: 'var(--text-muted)' }}>

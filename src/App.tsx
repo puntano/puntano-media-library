@@ -36,6 +36,7 @@ export const App: React.FC = () => {
     totalMediaCount,
     setTotalMediaCount,
     incrementSyncRevision,
+    incrementThumbnailRevision,
     isDuplicateModalOpen,
     setDuplicateModalOpen,
     isShortcutsModalOpen,
@@ -93,6 +94,22 @@ export const App: React.FC = () => {
       unlistenPromise.then((unlisten) => unlisten());
     };
   }, [setTotalMediaCount, incrementSyncRevision]);
+
+  // Real-time notification when background thumbnail worker finishes batches
+  useEffect(() => {
+    let thumbTimer: ReturnType<typeof setTimeout> | null = null;
+    const unlistenPromise = tauriApi.onThumbnailsReady(() => {
+      if (thumbTimer) clearTimeout(thumbTimer);
+      thumbTimer = setTimeout(() => {
+        incrementThumbnailRevision();
+      }, 300);
+    });
+
+    return () => {
+      if (thumbTimer) clearTimeout(thumbTimer);
+      unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, [incrementThumbnailRevision]);
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', width: '100%', height: '100%', overflow: 'hidden' }}>

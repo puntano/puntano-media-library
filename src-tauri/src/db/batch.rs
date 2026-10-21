@@ -85,7 +85,7 @@ impl MediaRepository {
                     width = excluded.width,
                     height = excluded.height,
                     duration = excluded.duration,
-                    orientation = excluded.orientation,
+                    orientation = CASE WHEN media_files.file_hash = excluded.file_hash THEN media_files.orientation ELSE excluded.orientation END,
                     captured_at = excluded.captured_at,
                     captured_at_local = excluded.captured_at_local,
                     timezone_offset = excluded.timezone_offset,
@@ -100,6 +100,7 @@ impl MediaRepository {
                     aperture = excluded.aperture,
                     iso = excluded.iso,
                     exposure_time = excluded.exposure_time,
+                    thumbnail_status = CASE WHEN media_files.file_hash != excluded.file_hash THEN 'pending' ELSE media_files.thumbnail_status END,
                     updated_at = excluded.updated_at;
                 "#,
             )?;
@@ -156,22 +157,93 @@ impl MediaRepository {
         Ok(exists)
     }
 
+    /// Loads existing (file_modified_at, file_size) signatures for a library to enable O(1) differential re-scanning.
+    pub fn get_indexed_file_signatures(
+        conn: &Connection,
+        library_id: i64,
+    ) -> Result<std::collections::HashMap<String, (i64, i64)>> {
+        let mut stmt = conn.prepare_cached(
+            "SELECT file_path, file_modified_at, file_size FROM media_files WHERE library_id = ?1;"
+        )?;
+        let rows = stmt.query_map(params![library_id], |row| {
+            Ok((
+                row.get::<_, String>(0)?,
+                (row.get::<_, i64>(1)?, row.get::<_, i64>(2)?),
+            ))
+        })?;
+
+        let mut map = std::collections::HashMap::new();
+        for r in rows {
+            let (path, sig) = r?;
+            map.insert(path, sig);
+        }
+        Ok(map)
+    }
+
+    fn row_to_spatial_point(row: &rusqlite::Row) -> Result<SpatialClusterPoint> {
+        Ok(SpatialClusterPoint {
+            id: row.get(0)?,
+            latitude: row.get(1)?,
+            longitude: row.get(2)?,
+            file_path: row.get(3)?,
+            file_hash: row.get(4)?,
+            captured_at: row.get(5)?,
+            thumbnail_path: row.get(6)?,
+            media_type: row.get(7)?,
+            is_favorite: row.get::<_, i64>(8).unwrap_or(0) == 1,
+            rating: row.get::<_, u32>(9).unwrap_or(0),
+        })
+    }
+
     /// High-performance spatial query: retrieves media within a map bounding box using the R*Tree index with table fallback.
     pub fn query_by_bounding_box(
         conn: &Connection,
         bbox: &SpatialBoundingBox,
         limit: u32,
     ) -> Result<Vec<SpatialClusterPoint>> {
+        Self::query_by_bounding_box_filtered(conn, bbox, limit, None, None)
+    }
+
+    /// High-performance spatial query with optional album and tag relational filtering.
+    pub fn query_by_bounding_box_filtered(
+        conn: &Connection,
+        bbox: &SpatialBoundingBox,
+        limit: u32,
+        album_id: Option<i64>,
+        tag_id: Option<i64>,
+    ) -> Result<Vec<SpatialClusterPoint>> {
         let min_lat = bbox.min_lat.min(bbox.max_lat).max(-90.0);
         let max_lat = bbox.min_lat.max(bbox.max_lat).min(90.0);
         let spans_world = (bbox.max_lon - bbox.min_lon).abs() >= 360.0;
+
+        let filter_point = |pt: &SpatialClusterPoint, conn: &Connection| -> bool {
+            if let Some(aid) = album_id {
+                let in_album = conn
+                    .prepare_cached("SELECT 1 FROM album_media WHERE album_id = ?1 AND media_id = ?2 LIMIT 1;")
+                    .and_then(|mut s| s.exists(params![aid, pt.id]))
+                    .unwrap_or(false);
+                if !in_album {
+                    return false;
+                }
+            }
+            if let Some(tid) = tag_id {
+                let has_tag = conn
+                    .prepare_cached("SELECT 1 FROM media_tags WHERE tag_id = ?1 AND media_id = ?2 LIMIT 1;")
+                    .and_then(|mut s| s.exists(params![tid, pt.id]))
+                    .unwrap_or(false);
+                if !has_tag {
+                    return false;
+                }
+            }
+            true
+        };
 
         let mut points = Vec::new();
 
         if spans_world {
             let mut stmt = conn.prepare_cached(
                 r#"
-                SELECT m.id, m.latitude, m.longitude, m.file_path, m.file_hash, m.captured_at, m.thumbnail_path, m.media_type
+                SELECT m.id, m.latitude, m.longitude, m.file_path, m.file_hash, m.captured_at, m.thumbnail_path, m.media_type, m.is_favorite, m.rating
                 FROM media_files m
                 WHERE m.latitude IS NOT NULL AND m.longitude IS NOT NULL
                   AND m.latitude >= ?1 AND m.latitude <= ?2
@@ -179,21 +251,13 @@ impl MediaRepository {
                 "#,
             )?;
 
-            let rows = stmt.query_map(params![min_lat, max_lat, limit], |row| {
-                Ok(SpatialClusterPoint {
-                    id: row.get(0)?,
-                    latitude: row.get(1)?,
-                    longitude: row.get(2)?,
-                    file_path: row.get(3)?,
-                    file_hash: row.get(4)?,
-                    captured_at: row.get(5)?,
-                    thumbnail_path: row.get(6)?,
-                    media_type: row.get(7)?,
-                })
-            })?;
+            let rows = stmt.query_map(params![min_lat, max_lat, limit], Self::row_to_spatial_point)?;
 
             for p in rows {
-                points.push(p?);
+                let pt = p?;
+                if filter_point(&pt, conn) {
+                    points.push(pt);
+                }
             }
             return Ok(points);
         }
@@ -206,7 +270,7 @@ impl MediaRepository {
 
             let rtree_result = conn.prepare_cached(
                 r#"
-                SELECT m.id, m.latitude, m.longitude, m.file_path, m.file_hash, m.captured_at, m.thumbnail_path, m.media_type
+                SELECT m.id, m.latitude, m.longitude, m.file_path, m.file_hash, m.captured_at, m.thumbnail_path, m.media_type, m.is_favorite, m.rating
                 FROM media_spatial_index s
                 JOIN media_files m ON s.id = m.id
                 WHERE s.min_lat >= ?1 AND s.max_lat <= ?2
@@ -216,22 +280,14 @@ impl MediaRepository {
             ).and_then(|mut stmt| {
                 let rows = stmt.query_map(
                     params![min_lat, max_lat, min_lon, max_lon, limit],
-                    |row| {
-                        Ok(SpatialClusterPoint {
-                            id: row.get(0)?,
-                            latitude: row.get(1)?,
-                            longitude: row.get(2)?,
-                            file_path: row.get(3)?,
-                            file_hash: row.get(4)?,
-                            captured_at: row.get(5)?,
-                            thumbnail_path: row.get(6)?,
-                            media_type: row.get(7)?,
-                        })
-                    },
+                    Self::row_to_spatial_point,
                 )?;
                 let mut res = Vec::new();
                 for r in rows {
-                    res.push(r?);
+                    let pt = r?;
+                    if filter_point(&pt, conn) {
+                        res.push(pt);
+                    }
                 }
                 Ok(res)
             });
@@ -242,7 +298,7 @@ impl MediaRepository {
 
             let mut fallback_stmt = conn.prepare_cached(
                 r#"
-                SELECT id, latitude, longitude, file_path, file_hash, captured_at, thumbnail_path, media_type
+                SELECT id, latitude, longitude, file_path, file_hash, captured_at, thumbnail_path, media_type, is_favorite, rating
                 FROM media_files
                 WHERE latitude IS NOT NULL AND longitude IS NOT NULL
                   AND latitude >= ?1 AND latitude <= ?2
@@ -253,27 +309,19 @@ impl MediaRepository {
 
             let rows = fallback_stmt.query_map(
                 params![min_lat, max_lat, min_lon, max_lon, limit],
-                |row| {
-                    Ok(SpatialClusterPoint {
-                        id: row.get(0)?,
-                        latitude: row.get(1)?,
-                        longitude: row.get(2)?,
-                        file_path: row.get(3)?,
-                        file_hash: row.get(4)?,
-                        captured_at: row.get(5)?,
-                        thumbnail_path: row.get(6)?,
-                        media_type: row.get(7)?,
-                    })
-                },
+                Self::row_to_spatial_point,
             )?;
 
             for p in rows {
-                points.push(p?);
+                let pt = p?;
+                if filter_point(&pt, conn) {
+                    points.push(pt);
+                }
             }
         } else {
             let mut fallback_stmt = conn.prepare_cached(
                 r#"
-                SELECT id, latitude, longitude, file_path, file_hash, captured_at, thumbnail_path, media_type
+                SELECT id, latitude, longitude, file_path, file_hash, captured_at, thumbnail_path, media_type, is_favorite, rating
                 FROM media_files
                 WHERE latitude IS NOT NULL AND longitude IS NOT NULL
                   AND latitude >= ?1 AND latitude <= ?2
@@ -284,22 +332,14 @@ impl MediaRepository {
 
             let rows = fallback_stmt.query_map(
                 params![min_lat, max_lat, bbox.min_lon, bbox.max_lon, limit],
-                |row| {
-                    Ok(SpatialClusterPoint {
-                        id: row.get(0)?,
-                        latitude: row.get(1)?,
-                        longitude: row.get(2)?,
-                        file_path: row.get(3)?,
-                        file_hash: row.get(4)?,
-                        captured_at: row.get(5)?,
-                        thumbnail_path: row.get(6)?,
-                        media_type: row.get(7)?,
-                    })
-                },
+                Self::row_to_spatial_point,
             )?;
 
             for p in rows {
-                points.push(p?);
+                let pt = p?;
+                if filter_point(&pt, conn) {
+                    points.push(pt);
+                }
             }
         }
 
@@ -427,12 +467,29 @@ impl MediaRepository {
         let mut params: Vec<Box<dyn rusqlite::types::ToSql>> = Vec::new();
 
         if let Some(ref text) = filter.query_text {
-            if !text.trim().is_empty() {
-                let pattern = format!("%{}%", text.trim());
-                sql.push_str(" AND (file_name LIKE ? OR directory LIKE ? OR camera_model LIKE ?)");
+            let trimmed = text.trim();
+            if !trimmed.is_empty() {
+                let pattern = format!("%{}%", trimmed);
+                let geo_boxes = crate::metadata::ReverseGeocoder::find_matching_bounding_boxes(trimmed);
+
+                sql.push_str(
+                    " AND (file_name LIKE ? OR directory LIKE ? OR camera_make LIKE ? OR camera_model LIKE ? OR lens_model LIKE ?",
+                );
+                params.push(Box::new(pattern.clone()));
+                params.push(Box::new(pattern.clone()));
                 params.push(Box::new(pattern.clone()));
                 params.push(Box::new(pattern.clone()));
                 params.push(Box::new(pattern));
+
+                for (min_lat, max_lat, min_lon, max_lon) in geo_boxes {
+                    sql.push_str(" OR (latitude BETWEEN ? AND ? AND longitude BETWEEN ? AND ?)");
+                    params.push(Box::new(min_lat));
+                    params.push(Box::new(max_lat));
+                    params.push(Box::new(min_lon));
+                    params.push(Box::new(max_lon));
+                }
+
+                sql.push(')');
             }
         }
 
@@ -447,7 +504,9 @@ impl MediaRepository {
         }
 
         if let Some(ref mtype) = filter.media_type {
-            if mtype != "all" {
+            if mtype == "photo" {
+                sql.push_str(" AND media_type IN ('photo', 'raw')");
+            } else if mtype != "all" {
                 sql.push_str(" AND media_type = ?");
                 params.push(Box::new(mtype.clone()));
             }
@@ -573,7 +632,14 @@ impl MediaRepository {
         Ok(groups)
     }
 
-    /// Deletes a media file record and optionally removes the physical file from disk
+    /// Moves a file to the OS Recycle Bin / Trash, falling back to direct removal if Trash is unavailable.
+    fn remove_file_to_trash_or_disk(path: &str) {
+        if trash::delete(path).is_err() {
+            let _ = std::fs::remove_file(path);
+        }
+    }
+
+    /// Deletes a media file record and optionally moves the physical file to the OS Trash / Recycle Bin
     pub fn delete_media_file(conn: &Connection, id: i64, delete_from_disk: bool) -> Result<Option<String>> {
         let path_opt: Option<String> = conn.query_row(
             "SELECT file_path FROM media_files WHERE id = ?1 LIMIT 1;",
@@ -583,7 +649,7 @@ impl MediaRepository {
 
         if let Some(ref path) = path_opt {
             if delete_from_disk {
-                let _ = std::fs::remove_file(path);
+                Self::remove_file_to_trash_or_disk(path);
             }
             conn.execute("DELETE FROM media_files WHERE id = ?1;", params![id])?;
         }
@@ -640,7 +706,7 @@ impl MediaRepository {
                 if let Some(p) = path {
                     let _ = del_stmt.execute(params![id]);
                     if delete_from_disk {
-                        let _ = std::fs::remove_file(&p);
+                        Self::remove_file_to_trash_or_disk(&p);
                     }
                     deleted_paths.push(p);
                 }
@@ -664,7 +730,7 @@ impl MediaRepository {
             r#"
             SELECT 
                 count(*),
-                count(CASE WHEN media_type = 'photo' THEN 1 END),
+                count(CASE WHEN media_type IN ('photo', 'raw') THEN 1 END),
                 count(CASE WHEN media_type = 'video' THEN 1 END),
                 coalesce(sum(file_size), 0),
                 count(CASE WHEN latitude IS NOT NULL AND longitude IS NOT NULL THEN 1 END),
@@ -752,6 +818,56 @@ impl MediaRepository {
         Ok(())
     }
 
+    pub fn update_album(
+        conn: &Connection,
+        id: i64,
+        name: &str,
+        description: Option<&str>,
+        cover_media_id: Option<i64>,
+    ) -> Result<()> {
+        conn.execute(
+            "UPDATE albums SET name = ?1, description = ?2, cover_media_id = COALESCE(?3, cover_media_id) WHERE id = ?4;",
+            params![name, description, cover_media_id, id],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_media_albums(conn: &Connection, media_id: i64) -> Result<Vec<Album>> {
+        let mut stmt = conn.prepare_cached(
+            r#"
+            SELECT 
+                a.id, a.name, a.description, a.cover_media_id,
+                m.file_path, m.file_hash,
+                (SELECT count(*) FROM album_media am WHERE am.album_id = a.id) as media_count,
+                a.created_at
+            FROM albums a
+            JOIN album_media am_filter ON a.id = am_filter.album_id
+            LEFT JOIN media_files m ON a.cover_media_id = m.id
+            WHERE am_filter.media_id = ?1
+            ORDER BY a.name ASC;
+            "#,
+        )?;
+
+        let rows = stmt.query_map(params![media_id], |row| {
+            Ok(Album {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                description: row.get(2)?,
+                cover_media_id: row.get(3)?,
+                cover_file_path: row.get(4)?,
+                cover_file_hash: row.get(5)?,
+                media_count: row.get(6)?,
+                created_at: row.get(7)?,
+            })
+        })?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            list.push(r?);
+        }
+        Ok(list)
+    }
+
     pub fn add_media_to_album(conn: &Connection, album_id: i64, media_ids: &[i64]) -> Result<()> {
         let now = chrono::Utc::now().timestamp_millis();
         for &mid in media_ids {
@@ -799,6 +915,21 @@ impl MediaRepository {
                 params![album_id, mid],
             )?;
         }
+        // Automatically reassign cover_media_id if the removed item was the album cover
+        conn.execute(
+            r#"
+            UPDATE albums
+            SET cover_media_id = (
+                SELECT media_id FROM album_media WHERE album_id = ?1 ORDER BY added_at DESC LIMIT 1
+            )
+            WHERE id = ?1 AND (
+                cover_media_id IS NULL OR cover_media_id NOT IN (
+                    SELECT media_id FROM album_media WHERE album_id = ?1
+                )
+            );
+            "#,
+            params![album_id],
+        )?;
         Ok(())
     }
 
@@ -809,15 +940,20 @@ impl MediaRepository {
     pub fn create_tag(conn: &Connection, name: &str, color: Option<&str>) -> Result<Tag> {
         let col = color.unwrap_or("#3b82f6");
         conn.execute(
-            "INSERT INTO tags (name, color) VALUES (?1, ?2);",
-            params![name, col],
+            "INSERT INTO tags (name, color) VALUES (?1, ?2)
+             ON CONFLICT(name) DO UPDATE SET color = COALESCE(?3, tags.color);",
+            params![name, col, color],
         )?;
-        let id = conn.last_insert_rowid();
+        let (id, actual_color, media_count): (i64, String, i64) = conn.query_row(
+            "SELECT id, color, (SELECT count(*) FROM media_tags WHERE tag_id = tags.id) FROM tags WHERE name = ?1;",
+            params![name],
+            |row| Ok((row.get(0)?, row.get(1)?, row.get(2)?)),
+        )?;
         Ok(Tag {
             id,
             name: name.to_string(),
-            color: col.to_string(),
-            media_count: 0,
+            color: actual_color,
+            media_count,
         })
     }
 
@@ -1161,7 +1297,20 @@ mod tests {
         let albums = MediaRepository::get_albums(&conn).unwrap();
         assert_eq!(albums.len(), 1);
         assert_eq!(albums[0].media_count, 2);
+        assert_eq!(albums[0].cover_media_id, Some(m1_id));
         assert!(albums[0].cover_file_path.is_some());
+
+        // Verify get_media_albums
+        let m1_albums = MediaRepository::get_media_albums(&conn, m1_id).unwrap();
+        assert_eq!(m1_albums.len(), 1);
+        assert_eq!(m1_albums[0].name, "Summer 2026");
+
+        // Update album name, description, and custom cover
+        MediaRepository::update_album(&conn, album.id, "Summer 2026 Edited", Some("Updated trip"), Some(m2_id)).unwrap();
+        let updated_albums = MediaRepository::get_albums(&conn).unwrap();
+        assert_eq!(updated_albums[0].name, "Summer 2026 Edited");
+        assert_eq!(updated_albums[0].description.as_deref(), Some("Updated trip"));
+        assert_eq!(updated_albums[0].cover_media_id, Some(m2_id));
 
         // Filter media by album_id
         let q_album = MediaFilterQuery {
@@ -1171,10 +1320,11 @@ mod tests {
         let album_items = MediaRepository::search_media(&conn, &q_album).unwrap();
         assert_eq!(album_items.len(), 2);
 
-        // Remove media from album
-        MediaRepository::remove_media_from_album(&conn, album.id, &[m1_id]).unwrap();
+        // Remove the cover media (m2_id) from album and verify cover automatically reassigns to m1_id
+        MediaRepository::remove_media_from_album(&conn, album.id, &[m2_id]).unwrap();
         let albums_after = MediaRepository::get_albums(&conn).unwrap();
         assert_eq!(albums_after[0].media_count, 1);
+        assert_eq!(albums_after[0].cover_media_id, Some(m1_id));
 
         // Delete album
         MediaRepository::delete_album(&conn, album.id).unwrap();
@@ -1195,6 +1345,12 @@ mod tests {
         // Create Tag
         let tag = MediaRepository::create_tag(&conn, "Landscape", Some("#10b981")).unwrap();
         assert_eq!(tag.name, "Landscape");
+        assert_eq!(tag.color, "#10b981");
+
+        // Idempotent create_tag with existing name updates color when provided
+        let tag_dup = MediaRepository::create_tag(&conn, "Landscape", Some("#f59e0b")).unwrap();
+        assert_eq!(tag_dup.id, tag.id);
+        assert_eq!(tag_dup.color, "#f59e0b");
 
         // Add tag to media
         MediaRepository::add_tag_to_media(&conn, m_id, tag.id).unwrap();
@@ -1329,6 +1485,84 @@ mod tests {
         assert_eq!(stats.total_videos, 1);
         assert_eq!(stats.total_size_bytes, 8000);
         assert_eq!(stats.total_geotagged, 1);
+    }
+
+    #[test]
+    fn test_differential_signatures_and_manual_orientation_preservation() {
+        let mut conn = setup_test_db();
+        let item = create_test_item(1, "rotatable.jpg", "hash_v1", None, None, Some(1720000000000), "photo");
+        MediaRepository::insert_batch(&mut conn, &[item.clone()]).unwrap();
+
+        let sigs = MediaRepository::get_indexed_file_signatures(&conn, 1).unwrap();
+        assert_eq!(sigs.get("/test/lib/rotatable.jpg"), Some(&(1720000000000, 1024)));
+
+        // Manually rotate to 6 (90° CW)
+        let id = MediaRepository::query_media_paged(&conn, 1, 0).unwrap()[0].id.unwrap();
+        MediaRepository::set_media_orientation(&conn, id, 6).unwrap();
+
+        // Re-inserting with same file_hash and orientation=1 must preserve manual orientation=6
+        MediaRepository::insert_batch(&mut conn, &[item.clone()]).unwrap();
+        let after_same = MediaRepository::get_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(after_same.orientation, 6);
+        assert_eq!(after_same.thumbnail_status, "ready");
+
+        // Re-inserting with modified file_hash resets thumbnail_status to 'pending'
+        let mut modified = item;
+        modified.file_hash = "hash_v2".to_string();
+        modified.file_size = 2048;
+        MediaRepository::insert_batch(&mut conn, &[modified]).unwrap();
+        let after_mod = MediaRepository::get_by_id(&conn, id).unwrap().unwrap();
+        assert_eq!(after_mod.thumbnail_status, "pending");
+    }
+
+    #[test]
+    fn test_raw_media_included_in_photo_filters_and_stats() {
+        let mut conn = setup_test_db();
+        let jpg = create_test_item(1, "std.jpg", "h_jpg", None, None, Some(1720000000000), "photo");
+        let raw = create_test_item(2, "camera.cr2", "h_raw", None, None, Some(1720000001000), "raw");
+        let vid = create_test_item(3, "clip.mp4", "h_vid", None, None, Some(1720000002000), "video");
+        MediaRepository::insert_batch(&mut conn, &[jpg, raw, vid]).unwrap();
+
+        let stats = MediaRepository::get_library_stats(&conn).unwrap();
+        assert_eq!(stats.total_files, 3);
+        assert_eq!(stats.total_photos, 2, "RAW files should count toward total_photos");
+        assert_eq!(stats.total_videos, 1);
+
+        let photos = MediaRepository::search_media(&conn, &MediaFilterQuery {
+            media_type: Some("photo".into()),
+            ..Default::default()
+        }).unwrap();
+        assert_eq!(photos.len(), 2, "Photo filter should return both standard photos and RAW files");
+    }
+
+    #[test]
+    fn test_search_media_by_place_name_reverse_geocoding() {
+        let mut conn = setup_test_db();
+        let sf_item = create_test_item(1, "IMG_001.jpg", "h_sf", Some(37.7749), Some(-122.4194), Some(1720000000000), "photo");
+        let tokyo_item = create_test_item(2, "IMG_002.jpg", "h_tyo", Some(35.6762), Some(139.6503), Some(1720000001000), "photo");
+        let san_luis_item = create_test_item(3, "IMG_003.jpg", "h_sl", Some(-33.3017), Some(-66.3378), Some(1720000002000), "photo");
+        MediaRepository::insert_batch(&mut conn, &[sf_item, tokyo_item, san_luis_item]).unwrap();
+
+        let sf_matches = MediaRepository::search_media(&conn, &MediaFilterQuery {
+            query_text: Some("San Francisco".into()),
+            ..Default::default()
+        }).unwrap();
+        assert_eq!(sf_matches.len(), 1);
+        assert_eq!(sf_matches[0].file_name, "IMG_001.jpg");
+
+        let japan_matches = MediaRepository::search_media(&conn, &MediaFilterQuery {
+            query_text: Some("Japan".into()),
+            ..Default::default()
+        }).unwrap();
+        assert_eq!(japan_matches.len(), 1);
+        assert_eq!(japan_matches[0].file_name, "IMG_002.jpg");
+
+        let ar_matches = MediaRepository::search_media(&conn, &MediaFilterQuery {
+            query_text: Some("San Luis".into()),
+            ..Default::default()
+        }).unwrap();
+        assert_eq!(ar_matches.len(), 1);
+        assert_eq!(ar_matches[0].file_name, "IMG_003.jpg");
     }
 }
 

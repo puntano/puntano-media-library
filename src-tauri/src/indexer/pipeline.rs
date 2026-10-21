@@ -1,5 +1,5 @@
 use std::fs::File;
-use std::io::Read;
+use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
@@ -30,7 +30,9 @@ impl IndexingPipeline {
         Self { batch_size }
     }
 
-    /// Computes a fast xxHash64 over the file content (reads first 1MB + last 64KB for multi-gigabyte files, full file for smaller).
+    /// Computes a fast xxHash64 over the file content:
+    /// - Full file if <= 1MB
+    /// - First 512KB + middle 64KB + last 64KB + file size for files > 1MB
     pub fn compute_fast_hash<P: AsRef<Path>>(path: P, file_size: i64) -> String {
         let mut hasher = Xxh64::new(0);
         let mut file = match File::open(path) {
@@ -45,11 +47,30 @@ impl IndexingPipeline {
                 hasher.update(&buffer);
             }
         } else {
-            // Read first 512KB + file size for fast fingerprinting
-            let mut buffer = [0u8; 524288];
-            if let Ok(n) = file.read(&mut buffer) {
-                hasher.update(&buffer[..n]);
+            let size_u64 = file_size as u64;
+            // 1. Read first 512KB
+            let mut head_buf = vec![0u8; 524288];
+            if let Ok(n) = file.read(&mut head_buf) {
+                hasher.update(&head_buf[..n]);
             }
+
+            // 2. Read middle 64KB
+            let mut chunk_buf = [0u8; 65536];
+            let mid_offset = (size_u64 / 2).saturating_sub(32768);
+            if file.seek(SeekFrom::Start(mid_offset)).is_ok() {
+                if let Ok(n) = file.read(&mut chunk_buf) {
+                    hasher.update(&chunk_buf[..n]);
+                }
+            }
+
+            // 3. Read last 64KB
+            let tail_offset = size_u64.saturating_sub(65536);
+            if file.seek(SeekFrom::Start(tail_offset)).is_ok() {
+                if let Ok(n) = file.read(&mut chunk_buf) {
+                    hasher.update(&chunk_buf[..n]);
+                }
+            }
+
             hasher.update(&file_size.to_le_bytes());
         }
 
@@ -126,17 +147,54 @@ impl IndexingPipeline {
             return Ok(0);
         }
 
+        // Differential check: skip files whose (file_modified_at, file_size) already match the database
+        let existing_signatures = MediaRepository::get_indexed_file_signatures(conn, library_id)
+            .unwrap_or_default();
+
+        let files_to_process: Vec<_> = discovered
+            .into_iter()
+            .filter(|file| {
+                let path_str = file.path.to_string_lossy();
+                match existing_signatures.get(path_str.as_ref()) {
+                    Some(&(mtime, size)) => mtime != file.file_modified_at || size != file.file_size,
+                    None => true,
+                }
+            })
+            .collect();
+
+        let unchanged_count = total_discovered.saturating_sub(files_to_process.len() as u64);
+
+        if files_to_process.is_empty() {
+            log::info!(
+                "Differential scan complete for '{}': all {} files are unchanged ({}ms).",
+                root_dir,
+                total_discovered,
+                start_time.elapsed().as_millis()
+            );
+            progress_callback(IndexingProgressEvent {
+                stage: "completed".into(),
+                scanned_files: total_discovered,
+                indexed_files: total_discovered,
+                current_directory: root_dir.to_string(),
+                is_complete: true,
+                elapsed_ms: start_time.elapsed().as_millis() as u64,
+            });
+            return Ok(total_discovered);
+        }
+
         log::info!(
-            "Discovery complete for '{}': {} files found in {}ms. Starting metadata extraction & SQLite ingestion.",
+            "Discovery complete for '{}': {} files found ({} unchanged, {} new/modified) in {}ms. Starting metadata extraction & SQLite ingestion.",
             root_dir,
             total_discovered,
+            unchanged_count,
+            files_to_process.len(),
             start_time.elapsed().as_millis()
         );
 
         // Bounded channel to prevent uncontrolled memory spikes during large library scans
         let (tx, rx): (Sender<MediaItem>, Receiver<MediaItem>) = bounded(1000);
-        let indexed_counter = Arc::new(AtomicU64::new(0));
-        let scanned_counter = Arc::new(AtomicU64::new(0));
+        let indexed_counter = Arc::new(AtomicU64::new(unchanged_count));
+        let scanned_counter = Arc::new(AtomicU64::new(unchanged_count));
         let cancel = cancel_token.clone();
 
         // 2. Stage 2: Parallel Metadata Extraction (Rayon Worker Pool)
@@ -144,7 +202,7 @@ impl IndexingPipeline {
         let scanned_clone = scanned_counter.clone();
 
         std::thread::spawn(move || {
-            discovered.into_par_iter().for_each(|file| {
+            files_to_process.into_par_iter().for_each(|file| {
                 if cancel.load(Ordering::Relaxed) {
                     return;
                 }
@@ -243,7 +301,7 @@ impl IndexingPipeline {
 
         // 3. Stage 3: Dedicated Transactional Batch Ingestion (Writer)
         let mut batch = Vec::with_capacity(self.batch_size);
-        let mut total_indexed: u64 = 0;
+        let mut total_indexed: u64 = unchanged_count;
         let mut last_progress_report = Instant::now();
 
         while let Ok(item) = rx.recv() {
@@ -369,5 +427,27 @@ mod tests {
         let hash = IndexingPipeline::compute_fast_hash(&temp_file, 45);
         assert_eq!(hash.len(), 16);
         let _ = std::fs::remove_file(temp_file);
+    }
+
+    #[test]
+    fn test_fast_hash_multi_region_distinguishes_large_files() {
+        let size = 2 * 1024 * 1024; // 2 MB
+        let content_a = vec![0xAAu8; size];
+        let mut content_b = vec![0xAAu8; size];
+        // Modify a byte near the end (outside the first 512KB)
+        content_b[size - 100] = 0xFF;
+
+        let path_a = std::env::temp_dir().join("test_hash_large_a.bin");
+        let path_b = std::env::temp_dir().join("test_hash_large_b.bin");
+        std::fs::write(&path_a, &content_a).unwrap();
+        std::fs::write(&path_b, &content_b).unwrap();
+
+        let hash_a = IndexingPipeline::compute_fast_hash(&path_a, size as i64);
+        let hash_b = IndexingPipeline::compute_fast_hash(&path_b, size as i64);
+
+        let _ = std::fs::remove_file(path_a);
+        let _ = std::fs::remove_file(path_b);
+
+        assert_ne!(hash_a, hash_b, "Multi-region hash must distinguish large files with identical 512KB headers");
     }
 }

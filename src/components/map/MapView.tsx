@@ -18,6 +18,7 @@ export const MapView: React.FC = () => {
 
   const [points, setPoints] = useState<SpatialClusterPoint[]>([]);
   const [selectedPoint, setSelectedPoint] = useState<SpatialClusterPoint | null>(null);
+  const [selectedLocationName, setSelectedLocationName] = useState<string | null>(null);
   const [clusterCount, setClusterCount] = useState<number>(0);
   const [activeZoom, setActiveZoom] = useState<number>(2);
   const [isTrayExpanded, setIsTrayExpanded] = useState<boolean>(true);
@@ -27,12 +28,21 @@ export const MapView: React.FC = () => {
     openLightbox,
     mediaTypeFilter,
     searchQuery,
+    isFavoriteOnly,
+    minRating,
+    selectedAlbumId,
+    selectedTagId,
     dateFrom,
     dateTo,
     isIndexing,
     totalMediaCount,
     syncRevision,
+    mapFocusTarget,
+    setMapFocusTarget,
   } = useLibraryStore();
+
+  const filterIdsRef = useRef({ albumId: selectedAlbumId, tagId: selectedTagId });
+  filterIdsRef.current = { albumId: selectedAlbumId, tagId: selectedTagId };
 
   // 1. Initialize MapLibre
   useEffect(() => {
@@ -93,7 +103,9 @@ export const MapView: React.FC = () => {
             bounds.getNorth(),
             bounds.getWest(),
             bounds.getEast(),
-            20000
+            20000,
+            filterIdsRef.current.albumId,
+            filterIdsRef.current.tagId
           )
           .then((data) => {
             setPoints(data);
@@ -105,9 +117,19 @@ export const MapView: React.FC = () => {
     map.current.on('zoomend', handleViewportChange);
 
     // Initial query
-    tauriApi.querySpatialBoundingBox(-90, 90, -180, 180, 20000).then((data) => {
-      setPoints(data);
-    });
+    tauriApi
+      .querySpatialBoundingBox(
+        -90,
+        90,
+        -180,
+        180,
+        20000,
+        filterIdsRef.current.albumId,
+        filterIdsRef.current.tagId
+      )
+      .then((data) => {
+        setPoints(data);
+      });
 
     return () => {
       if (debounceTimer) clearTimeout(debounceTimer);
@@ -119,7 +141,7 @@ export const MapView: React.FC = () => {
     };
   }, []);
 
-  // Re-query spatial points when library finishes indexing or media count updates
+  // Re-query spatial points when library finishes indexing, media count updates, or album/tag filters change
   useEffect(() => {
     if (!map.current) return;
     map.current.resize();
@@ -130,18 +152,61 @@ export const MapView: React.FC = () => {
         bounds.getNorth(),
         bounds.getWest(),
         bounds.getEast(),
-        20000
+        20000,
+        selectedAlbumId,
+        selectedTagId
       )
       .then((data) => {
         setPoints(data);
       })
       .catch((err) => console.error('Spatial refresh error:', err));
-  }, [isIndexing, totalMediaCount, syncRevision]);
+  }, [isIndexing, totalMediaCount, syncRevision, selectedAlbumId, selectedTagId]);
+
+  // Center and zoom map when triggered from MetadataDrawer "View on Map"
+  useEffect(() => {
+    if (!mapFocusTarget || !map.current) return;
+    const targetPoint: SpatialClusterPoint = {
+      id: mapFocusTarget.id,
+      latitude: mapFocusTarget.latitude,
+      longitude: mapFocusTarget.longitude,
+      file_path: mapFocusTarget.file_path,
+      file_hash: mapFocusTarget.file_hash,
+      media_type: mapFocusTarget.media_type,
+      captured_at: mapFocusTarget.captured_at,
+      is_favorite: mapFocusTarget.is_favorite,
+      rating: mapFocusTarget.rating,
+    };
+    setSelectedPoint(targetPoint);
+    map.current.flyTo({
+      center: [mapFocusTarget.longitude, mapFocusTarget.latitude],
+      zoom: Math.max(map.current.getZoom(), 15),
+      duration: 750,
+    });
+    setMapFocusTarget(null);
+  }, [mapFocusTarget, setMapFocusTarget]);
+
+  // Resolve reverse-geocoded location name for selected point
+  useEffect(() => {
+    if (selectedPoint) {
+      tauriApi
+        .resolveLocationName(selectedPoint.latitude, selectedPoint.longitude)
+        .then(setSelectedLocationName)
+        .catch(() => setSelectedLocationName(null));
+    } else {
+      setSelectedLocationName(null);
+    }
+  }, [selectedPoint?.id, selectedPoint?.latitude, selectedPoint?.longitude]);
 
   // Filter points according to active global filters
   const filteredPoints = useMemo(() => {
     return points.filter((p) => {
-      if (mediaTypeFilter !== 'all' && p.media_type !== mediaTypeFilter) return false;
+      if (mediaTypeFilter === 'photo') {
+        if (p.media_type !== 'photo' && p.media_type !== 'raw') return false;
+      } else if (mediaTypeFilter !== 'all' && p.media_type !== mediaTypeFilter) {
+        return false;
+      }
+      if (isFavoriteOnly && !p.is_favorite) return false;
+      if (minRating > 0 && (p.rating || 0) < minRating) return false;
       if (dateFrom && p.captured_at && p.captured_at < dateFrom) return false;
       if (dateTo && p.captured_at && p.captured_at > dateTo) return false;
       if (searchQuery.trim()) {
@@ -150,7 +215,7 @@ export const MapView: React.FC = () => {
       }
       return true;
     });
-  }, [points, mediaTypeFilter, dateFrom, dateTo, searchQuery]);
+  }, [points, mediaTypeFilter, isFavoriteOnly, minRating, dateFrom, dateTo, searchQuery]);
 
   // 2. Load filtered points into Supercluster
   useEffect(() => {
@@ -288,8 +353,8 @@ export const MapView: React.FC = () => {
       captured_at: point.captured_at,
       latitude: point.latitude,
       longitude: point.longitude,
-      is_favorite: false,
-      rating: 0,
+      is_favorite: point.is_favorite ?? false,
+      rating: point.rating ?? 0,
       thumbnail_status: 'ready',
       indexed_at: Date.now(),
       updated_at: Date.now(),
@@ -409,8 +474,14 @@ export const MapView: React.FC = () => {
             <div style={{ fontWeight: 600, fontSize: '0.875rem', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {selectedPoint.file_path.split(/[/\\]/).pop()}
             </div>
-            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 2 }}>
-              {selectedPoint.latitude.toFixed(4)}°, {selectedPoint.longitude.toFixed(4)}°
+            <div style={{ fontSize: '0.75rem', color: 'var(--text-secondary)', marginTop: 2, display: 'flex', alignItems: 'center', gap: 6 }}>
+              {selectedLocationName && (
+                <>
+                  <span style={{ color: 'var(--accent-primary)', fontWeight: 600 }}>{selectedLocationName}</span>
+                  <span>•</span>
+                </>
+              )}
+              <span>{selectedPoint.latitude.toFixed(4)}°, {selectedPoint.longitude.toFixed(4)}°</span>
             </div>
           </div>
 

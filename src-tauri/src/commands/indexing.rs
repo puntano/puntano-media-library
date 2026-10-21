@@ -10,6 +10,7 @@ use crate::models::IndexingProgressEvent;
 pub struct AppState {
     pub db_path: PathBuf,
     pub cancel_token: Arc<AtomicBool>,
+    pub watcher_tx: std::sync::Mutex<std::sync::mpsc::Sender<crate::indexer::WatcherCommand>>,
 }
 
 #[tauri::command]
@@ -27,6 +28,11 @@ pub async fn start_indexing(
             e
         })?;
     let canonical_path_str = validated_dir.to_string_lossy().to_string();
+
+    // Register folder with live filesystem watcher immediately
+    if let Ok(tx) = state.watcher_tx.lock() {
+        let _ = tx.send(crate::indexer::WatcherCommand::Watch(validated_dir));
+    }
 
     state.cancel_token.store(false, Ordering::Relaxed);
     let cancel = state.cancel_token.clone();
@@ -140,8 +146,20 @@ pub fn get_libraries(state: State<'_, AppState>) -> Result<Vec<crate::models::Li
 pub fn remove_library(state: State<'_, AppState>, library_id: i64) -> Result<(), String> {
     let conn = DatabaseManager::open(&state.db_path)
         .map_err(|e| format!("Failed to open DB: {}", e))?;
+    let path_opt: Option<String> = conn
+        .query_row(
+            "SELECT path FROM libraries WHERE id = ?1;",
+            rusqlite::params![library_id],
+            |row| row.get(0),
+        )
+        .ok();
     conn.execute("DELETE FROM libraries WHERE id = ?1;", rusqlite::params![library_id])
         .map_err(|e| format!("Failed to remove library: {}", e))?;
+    if let Some(p) = path_opt {
+        if let Ok(tx) = state.watcher_tx.lock() {
+            let _ = tx.send(crate::indexer::WatcherCommand::Unwatch(PathBuf::from(p)));
+        }
+    }
     Ok(())
 }
 

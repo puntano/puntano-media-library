@@ -10,7 +10,9 @@ import {
   Info,
   Heart,
   Star,
+  Folder,
   FolderPlus,
+  Image as ImageIcon,
   Tag as TagIcon,
   Plus,
   Copy,
@@ -21,9 +23,20 @@ import {
 import { convertFileSrc } from '@tauri-apps/api/core';
 import { useLibraryStore } from '../../stores/libraryStore';
 import { tauriApi } from '../../services/tauriApi';
-import { Tag } from '../../types/media';
+import { Album, Tag } from '../../types/media';
 import { MediaThumbnail } from '../common/MediaThumbnail';
 import { AddToAlbumModal } from '../albums/AddToAlbumModal';
+
+const TAG_COLORS = [
+  '#3b82f6',
+  '#10b981',
+  '#f59e0b',
+  '#ef4444',
+  '#8b5cf6',
+  '#06b6d4',
+  '#ec4899',
+  '#f97316',
+];
 
 export const MetadataDrawer: React.FC = () => {
   const {
@@ -32,17 +45,22 @@ export const MetadataDrawer: React.FC = () => {
     setInspectorOpen,
     setSelectedItem,
     setActiveView,
+    setMapFocusTarget,
+    syncRevision,
     incrementSyncRevision,
   } = useLibraryStore();
 
   const [hoverRating, setHoverRating] = useState<number | null>(null);
   const [showAddToAlbum, setShowAddToAlbum] = useState<boolean>(false);
+  const [itemAlbums, setItemAlbums] = useState<Album[]>([]);
   const [tags, setTags] = useState<Tag[]>([]);
   const [newTagInput, setNewTagInput] = useState<string>('');
+  const [newTagColor, setNewTagColor] = useState<string>(TAG_COLORS[0]);
   const [isAddingTag, setIsAddingTag] = useState<boolean>(false);
   const [copiedPath, setCopiedPath] = useState<boolean>(false);
   const [showDeleteConfirm, setShowDeleteConfirm] = useState<boolean>(false);
   const [isDeleting, setIsDeleting] = useState<boolean>(false);
+  const [locationName, setLocationName] = useState<string | null>(null);
 
   useEffect(() => {
     const handleKeyDown = (e: KeyboardEvent) => {
@@ -58,17 +76,33 @@ export const MetadataDrawer: React.FC = () => {
     return () => window.removeEventListener('keydown', handleKeyDown);
   }, [isInspectorOpen, setInspectorOpen, showDeleteConfirm]);
 
-  // Load tags for current item
+  // Load tags, albums, and reverse-geocoded location name for current item
   useEffect(() => {
     if (selectedItem?.id) {
       tauriApi
         .getMediaTags(selectedItem.id)
         .then(setTags)
         .catch((err) => console.error('Failed to load item tags:', err));
+      tauriApi
+        .getMediaAlbums(selectedItem.id)
+        .then(setItemAlbums)
+        .catch((err) => console.error('Failed to load item albums:', err));
     } else {
       setTags([]);
+      setItemAlbums([]);
     }
-  }, [selectedItem?.id]);
+  }, [selectedItem?.id, showAddToAlbum, syncRevision]);
+
+  useEffect(() => {
+    if (selectedItem?.latitude != null && selectedItem?.longitude != null) {
+      tauriApi
+        .resolveLocationName(selectedItem.latitude, selectedItem.longitude)
+        .then(setLocationName)
+        .catch(() => setLocationName(null));
+    } else {
+      setLocationName(null);
+    }
+  }, [selectedItem?.id, selectedItem?.latitude, selectedItem?.longitude]);
 
   if (!isInspectorOpen || !selectedItem) return null;
 
@@ -78,7 +112,21 @@ export const MetadataDrawer: React.FC = () => {
   };
 
   const handleViewOnMap = () => {
+    if (selectedItem?.latitude != null && selectedItem?.longitude != null) {
+      setMapFocusTarget({
+        id: selectedItem.id,
+        latitude: selectedItem.latitude,
+        longitude: selectedItem.longitude,
+        file_path: selectedItem.file_path,
+        file_hash: selectedItem.file_hash,
+        media_type: selectedItem.media_type,
+        captured_at: selectedItem.captured_at,
+        is_favorite: selectedItem.is_favorite,
+        rating: selectedItem.rating,
+      });
+    }
     setActiveView('map');
+    setInspectorOpen(false);
   };
 
   const handleRevealInExplorer = () => {
@@ -144,9 +192,13 @@ export const MetadataDrawer: React.FC = () => {
 
     setIsAddingTag(true);
     try {
-      const tag = await tauriApi.createTag(tagName);
+      const tag = await tauriApi.createTag(tagName, newTagColor);
       await tauriApi.addTagToMedia(selectedItem.id, tag.id);
-      setTags((prev) => (prev.some((t) => t.id === tag.id) ? prev : [...prev, tag]));
+      setTags((prev) =>
+        prev.some((t) => t.id === tag.id)
+          ? prev.map((t) => (t.id === tag.id ? tag : t))
+          : [...prev, tag]
+      );
       setNewTagInput('');
       incrementSyncRevision();
     } catch (err) {
@@ -163,6 +215,28 @@ export const MetadataDrawer: React.FC = () => {
       incrementSyncRevision();
     } catch (err) {
       console.error('Failed to remove tag:', err);
+    }
+  };
+
+  const handleRemoveFromAlbum = async (albumId: number) => {
+    try {
+      await tauriApi.removeMediaFromAlbum(albumId, [selectedItem.id]);
+      setItemAlbums((prev) => prev.filter((a) => a.id !== albumId));
+      incrementSyncRevision();
+    } catch (err) {
+      console.error('Failed to remove from album:', err);
+    }
+  };
+
+  const handleSetAlbumCover = async (album: Album) => {
+    try {
+      await tauriApi.updateAlbum(album.id, album.name, album.description, selectedItem.id);
+      setItemAlbums((prev) =>
+        prev.map((a) => (a.id === album.id ? { ...a, cover_media_id: selectedItem.id } : a))
+      );
+      incrementSyncRevision();
+    } catch (err) {
+      console.error('Failed to set album cover:', err);
     }
   };
 
@@ -354,6 +428,76 @@ export const MetadataDrawer: React.FC = () => {
               </div>
             </div>
 
+            {/* Albums Membership */}
+            {itemAlbums.length > 0 && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
+                  <span style={{ fontSize: '0.75rem', color: 'var(--text-muted)', fontWeight: 600, display: 'flex', alignItems: 'center', gap: 4 }}>
+                    <Folder size={12} />
+                    In Albums
+                  </span>
+                  <span style={{ fontSize: '0.7rem', color: 'var(--text-muted)' }}>
+                    {itemAlbums.length} {itemAlbums.length === 1 ? 'album' : 'albums'}
+                  </span>
+                </div>
+
+                <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
+                  {itemAlbums.map((album) => {
+                    const isCover = album.cover_media_id === selectedItem.id;
+                    return (
+                      <span
+                        key={album.id}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: 5,
+                          padding: '3px 8px',
+                          borderRadius: 12,
+                          backgroundColor: 'rgba(59, 130, 246, 0.14)',
+                          border: '1px solid rgba(59, 130, 246, 0.35)',
+                          color: 'var(--accent-primary)',
+                          fontSize: '0.72rem',
+                          fontWeight: 600,
+                        }}
+                      >
+                        <Folder size={11} />
+                        <span>{album.name}</span>
+                        <button
+                          onClick={() => handleSetAlbumCover(album)}
+                          title={isCover ? 'Current album cover' : 'Set as album cover'}
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: isCover ? '#fbbf24' : 'var(--accent-primary)',
+                            cursor: 'pointer',
+                            padding: 0,
+                            display: 'flex',
+                            opacity: isCover ? 1 : 0.75,
+                          }}
+                        >
+                          <ImageIcon size={11} />
+                        </button>
+                        <button
+                          onClick={() => handleRemoveFromAlbum(album.id)}
+                          title="Remove from album"
+                          style={{
+                            background: 'transparent',
+                            border: 'none',
+                            color: 'var(--accent-primary)',
+                            cursor: 'pointer',
+                            padding: 0,
+                            display: 'flex',
+                          }}
+                        >
+                          <X size={11} />
+                        </button>
+                      </span>
+                    );
+                  })}
+                </div>
+              </div>
+            )}
+
             {/* Bottom: Tags */}
             <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
               <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}>
@@ -368,66 +512,95 @@ export const MetadataDrawer: React.FC = () => {
 
               {/* Tag Badges */}
               <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
-                {tags.map((tag) => (
-                  <span
-                    key={tag.id}
-                    style={{
-                      display: 'inline-flex',
-                      alignItems: 'center',
-                      gap: 4,
-                      padding: '3px 8px',
-                      borderRadius: 12,
-                      backgroundColor: 'rgba(59, 130, 246, 0.15)',
-                      color: 'var(--accent-primary)',
-                      fontSize: '0.72rem',
-                      fontWeight: 600,
-                    }}
-                  >
-                    #{tag.name}
-                    <button
-                      onClick={() => handleRemoveTag(tag.id)}
-                      title="Remove tag"
+                {tags.map((tag) => {
+                  const tagColor = tag.color || '#3b82f6';
+                  return (
+                    <span
+                      key={tag.id}
                       style={{
-                        background: 'transparent',
-                        border: 'none',
-                        color: 'var(--accent-primary)',
-                        cursor: 'pointer',
-                        padding: 0,
-                        display: 'flex',
+                        display: 'inline-flex',
+                        alignItems: 'center',
+                        gap: 5,
+                        padding: '3px 8px',
+                        borderRadius: 12,
+                        backgroundColor: `${tagColor}22`,
+                        border: `1px solid ${tagColor}55`,
+                        color: tagColor,
+                        fontSize: '0.72rem',
+                        fontWeight: 600,
                       }}
                     >
-                      <X size={11} />
-                    </button>
-                  </span>
-                ))}
+                      <span style={{ width: 6, height: 6, borderRadius: '50%', backgroundColor: tagColor }} />
+                      #{tag.name}
+                      <button
+                        onClick={() => handleRemoveTag(tag.id)}
+                        title="Remove tag"
+                        style={{
+                          background: 'transparent',
+                          border: 'none',
+                          color: tagColor,
+                          cursor: 'pointer',
+                          padding: 0,
+                          display: 'flex',
+                        }}
+                      >
+                        <X size={11} />
+                      </button>
+                    </span>
+                  );
+                })}
               </div>
 
-              {/* Add Tag Input */}
-              <form onSubmit={handleAddTag} style={{ display: 'flex', gap: 6, marginTop: 2 }}>
-                <input
-                  type="text"
-                  value={newTagInput}
-                  onChange={(e) => setNewTagInput(e.target.value)}
-                  placeholder="Add a new tag..."
-                  style={{
-                    flex: 1,
-                    padding: '5px 10px',
-                    backgroundColor: 'var(--bg-secondary)',
-                    border: '1px solid var(--surface-glass-border)',
-                    borderRadius: 'var(--radius-sm)',
-                    color: 'var(--text-primary)',
-                    fontSize: '0.75rem',
-                    outline: 'none',
-                  }}
-                />
-                <button
-                  type="submit"
-                  disabled={!newTagInput.trim() || isAddingTag}
-                  className="btn-primary"
-                  style={{ padding: '5px 10px', fontSize: '0.75rem' }}
-                >
-                  <Plus size={13} />
-                </button>
+              {/* Add Tag Input + Color Swatches */}
+              <form onSubmit={handleAddTag} style={{ display: 'flex', flexDirection: 'column', gap: 6, marginTop: 2 }}>
+                <div style={{ display: 'flex', gap: 6 }}>
+                  <input
+                    type="text"
+                    value={newTagInput}
+                    onChange={(e) => setNewTagInput(e.target.value)}
+                    placeholder="Add a new tag..."
+                    style={{
+                      flex: 1,
+                      padding: '5px 10px',
+                      backgroundColor: 'var(--bg-secondary)',
+                      border: '1px solid var(--surface-glass-border)',
+                      borderRadius: 'var(--radius-sm)',
+                      color: 'var(--text-primary)',
+                      fontSize: '0.75rem',
+                      outline: 'none',
+                    }}
+                  />
+                  <button
+                    type="submit"
+                    disabled={!newTagInput.trim() || isAddingTag}
+                    className="btn-primary"
+                    style={{ padding: '5px 10px', fontSize: '0.75rem' }}
+                  >
+                    <Plus size={13} />
+                  </button>
+                </div>
+                <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                  <span style={{ fontSize: '0.68rem', color: 'var(--text-muted)' }}>Color:</span>
+                  {TAG_COLORS.map((color) => (
+                    <button
+                      key={color}
+                      type="button"
+                      onClick={() => setNewTagColor(color)}
+                      title={`Select color ${color}`}
+                      style={{
+                        width: 14,
+                        height: 14,
+                        borderRadius: '50%',
+                        backgroundColor: color,
+                        border: newTagColor === color ? '2px solid #ffffff' : '1px solid rgba(255, 255, 255, 0.2)',
+                        cursor: 'pointer',
+                        padding: 0,
+                        transform: newTagColor === color ? 'scale(1.15)' : 'scale(1)',
+                        transition: 'transform 0.1s ease',
+                      }}
+                    />
+                  ))}
+                </div>
               </form>
             </div>
           </div>
@@ -623,6 +796,12 @@ export const MetadataDrawer: React.FC = () => {
                 </button>
               </div>
               <div style={{ display: 'flex', flexDirection: 'column', gap: 8, fontSize: '0.85rem' }}>
+                {locationName && (
+                  <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
+                    <span style={{ color: 'var(--text-muted)' }}>Location</span>
+                    <span style={{ fontWeight: 600, color: 'var(--accent-primary)' }}>{locationName}</span>
+                  </div>
+                )}
                 <div style={{ display: 'flex', justifyContent: 'space-between' }}>
                   <span style={{ color: 'var(--text-muted)' }}>Latitude</span>
                   <span>{selectedItem.latitude.toFixed(6)}°</span>
@@ -734,10 +913,10 @@ export const MetadataDrawer: React.FC = () => {
               >
                 <div style={{ fontWeight: 700, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}>
                   <Trash2 size={13} />
-                  Permanently Delete from Disk
+                  Move to Recycle Bin / Trash
                 </div>
                 <div style={{ fontSize: '0.72rem', color: 'rgba(239, 68, 68, 0.8)' }}>
-                  Warning: Permanently removes the file from your filesystem storage. Cannot be undone.
+                  Moves the file to your system Recycle Bin / Trash and removes it from the index.
                 </div>
               </button>
 

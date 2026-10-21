@@ -15,6 +15,8 @@ pub fn query_spatial_bounding_box(
     min_lon: f64,
     max_lon: f64,
     limit: Option<u32>,
+    album_id: Option<i64>,
+    tag_id: Option<i64>,
 ) -> Result<Vec<SpatialClusterPoint>, String> {
     let conn = DatabaseManager::open(&state.db_path)
         .map_err(|e| format!("Failed to open DB: {}", e))?;
@@ -26,8 +28,14 @@ pub fn query_spatial_bounding_box(
         max_lon,
     };
 
-    MediaRepository::query_by_bounding_box(&conn, &bbox, limit.unwrap_or(20000))
-        .map_err(|e| e.to_string())
+    MediaRepository::query_by_bounding_box_filtered(
+        &conn,
+        &bbox,
+        limit.unwrap_or(20000),
+        album_id,
+        tag_id,
+    )
+    .map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -156,6 +164,30 @@ pub fn delete_album(
     let conn = DatabaseManager::open(&state.db_path)
         .map_err(|e| format!("Failed to open DB: {}", e))?;
     MediaRepository::delete_album(&conn, id).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn update_album(
+    state: State<'_, AppState>,
+    id: i64,
+    name: String,
+    description: Option<String>,
+    cover_media_id: Option<i64>,
+) -> Result<(), String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::update_album(&conn, id, &name, description.as_deref(), cover_media_id)
+        .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn get_media_albums(
+    state: State<'_, AppState>,
+    media_id: i64,
+) -> Result<Vec<Album>, String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::get_media_albums(&conn, media_id).map_err(|e| e.to_string())
 }
 
 #[tauri::command]
@@ -312,6 +344,14 @@ pub fn set_media_orientation(
     let conn = DatabaseManager::open(&state.db_path)
         .map_err(|e| format!("Failed to open DB: {}", e))?;
     MediaRepository::set_media_orientation(&conn, id, orientation).map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn resolve_location_name(
+    latitude: f64,
+    longitude: f64,
+) -> Option<String> {
+    crate::metadata::ReverseGeocoder::resolve_location(latitude, longitude)
 }
 
 #[tauri::command]

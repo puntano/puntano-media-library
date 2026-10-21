@@ -77,6 +77,20 @@ export interface SpatialClusterPoint {
   captured_at?: number;
   thumbnail_path?: string;
   media_type: 'photo' | 'video' | 'raw';
+  is_favorite?: boolean;
+  rating?: number;
+}
+
+export interface MapFocusTarget {
+  id: number;
+  latitude: number;
+  longitude: number;
+  file_path: string;
+  file_hash: string;
+  media_type: 'photo' | 'video' | 'raw';
+  captured_at?: number;
+  is_favorite?: boolean;
+  rating?: number;
 }
 
 export interface TimelineGroup {

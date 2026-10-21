@@ -11,6 +11,7 @@ import {
   CheckSquare,
   Trash2,
   FolderPlus,
+  FolderMinus,
   Tag as TagIcon,
   SlidersHorizontal,
   AlertTriangle,
@@ -28,6 +29,17 @@ import { AddToAlbumModal } from '../albums/AddToAlbumModal';
 
 const PAGE_SIZE = 100;
 
+const TAG_COLORS = [
+  '#3b82f6',
+  '#10b981',
+  '#f59e0b',
+  '#ef4444',
+  '#8b5cf6',
+  '#06b6d4',
+  '#ec4899',
+  '#f97316',
+];
+
 export const VirtualGallery: React.FC = () => {
   const parentRef = useRef<HTMLDivElement>(null);
   const [items, setItems] = useState<MediaItem[]>([]);
@@ -41,6 +53,7 @@ export const VirtualGallery: React.FC = () => {
   const [isBatchProcessing, setIsBatchProcessing] = useState<boolean>(false);
   const [availableTags, setAvailableTags] = useState<Tag[]>([]);
   const [newTagInput, setNewTagInput] = useState<string>('');
+  const [newTagColor, setNewTagColor] = useState<string>(TAG_COLORS[0]);
   const [isCopiedFeedback, setIsCopiedFeedback] = useState<boolean>(false);
   const [batchStatusFeedback, setBatchStatusFeedback] = useState<string | null>(null);
 
@@ -59,6 +72,7 @@ export const VirtualGallery: React.FC = () => {
     minRating,
     selectedAlbumId,
     selectedTagId,
+    setSelectedTagId,
     dateFrom,
     dateTo,
     mediaTypeFilter,
@@ -224,13 +238,70 @@ export const VirtualGallery: React.FC = () => {
     if (!name || isBatchProcessing) return;
     setIsBatchProcessing(true);
     try {
-      const tag = await tauriApi.createTag(name);
+      const tag = await tauriApi.createTag(name, newTagColor);
       await tauriApi.batchAddTagToMedia(selectedMediaIds, tag.id);
       setNewTagInput('');
       setShowBatchTag(false);
       incrementSyncRevision();
     } catch (err) {
       console.error('Failed to create and apply batch tag:', err);
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const handleDeleteTagGlobal = async (tagId: number, e: React.MouseEvent) => {
+    e.stopPropagation();
+    try {
+      await tauriApi.deleteTag(tagId);
+      setAvailableTags((prev) => prev.filter((t) => t.id !== tagId));
+      if (selectedTagId === tagId) {
+        setSelectedTagId(null);
+      }
+      incrementSyncRevision();
+    } catch (err) {
+      console.error('Failed to delete tag:', err);
+    }
+  };
+
+  const handleRemoveFromCurrentAlbum = async () => {
+    if (!selectedAlbumId || selectedMediaIds.length === 0 || isBatchProcessing) return;
+    setIsBatchProcessing(true);
+    try {
+      const count = selectedMediaIds.length;
+      await tauriApi.removeMediaFromAlbum(selectedAlbumId, selectedMediaIds);
+      const removedSet = new Set(selectedMediaIds);
+      setItems((prev) => prev.filter((i) => !removedSet.has(i.id)));
+      clearMediaSelection();
+      incrementSyncRevision();
+      setBatchStatusFeedback(`Removed ${count} ${count === 1 ? 'item' : 'items'} from album`);
+      setTimeout(() => setBatchStatusFeedback(null), 3000);
+    } catch (err) {
+      console.error('Failed to remove items from album:', err);
+    } finally {
+      setIsBatchProcessing(false);
+    }
+  };
+
+  const handleSetCurrentAlbumCover = async () => {
+    if (!selectedAlbumId || selectedMediaIds.length !== 1 || isBatchProcessing) return;
+    setIsBatchProcessing(true);
+    try {
+      const allAlbums = await tauriApi.getAlbums();
+      const currentAlbum = allAlbums.find((a) => a.id === selectedAlbumId);
+      if (currentAlbum) {
+        await tauriApi.updateAlbum(
+          currentAlbum.id,
+          currentAlbum.name,
+          currentAlbum.description,
+          selectedMediaIds[0]
+        );
+        incrementSyncRevision();
+        setBatchStatusFeedback(`Set cover for "${currentAlbum.name}"`);
+        setTimeout(() => setBatchStatusFeedback(null), 3000);
+      }
+    } catch (err) {
+      console.error('Failed to set album cover:', err);
     } finally {
       setIsBatchProcessing(false);
     }
@@ -808,6 +879,33 @@ export const VirtualGallery: React.FC = () => {
             Add to Album
           </button>
 
+          {selectedAlbumId !== null && (
+            <>
+              {selectedMediaIds.length === 1 && (
+                <button
+                  className="btn-secondary"
+                  onClick={handleSetCurrentAlbumCover}
+                  disabled={isBatchProcessing}
+                  style={{ padding: '6px 12px', fontSize: '0.75rem', gap: 5 }}
+                  title="Set selected item as the cover for this album"
+                >
+                  <ImageIcon size={13} color="var(--accent-primary)" />
+                  Set Cover
+                </button>
+              )}
+              <button
+                className="btn-secondary"
+                onClick={handleRemoveFromCurrentAlbum}
+                disabled={isBatchProcessing}
+                style={{ padding: '6px 12px', fontSize: '0.75rem', gap: 5 }}
+                title="Remove selected items from this album (keeps files in library)"
+              >
+                <FolderMinus size={13} />
+                Remove from Album
+              </button>
+            </>
+          )}
+
           <button
             className="btn-secondary"
             onClick={handleOpenBatchTag}
@@ -937,48 +1035,101 @@ export const VirtualGallery: React.FC = () => {
             {/* Existing tags list */}
             <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginBottom: 16, maxHeight: 150, overflowY: 'auto' }}>
               {availableTags.map((t) => (
-                <button
+                <div
                   key={t.id}
-                  onClick={() => handleApplyBatchTag(t.id)}
                   style={{
-                    padding: '4px 10px',
+                    padding: '4px 8px 4px 10px',
                     borderRadius: 14,
                     fontSize: '0.78rem',
-                    border: '1px solid rgba(255, 255, 255, 0.1)',
-                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                    border: `1px solid ${t.color || '#3b82f6'}55`,
+                    backgroundColor: `${t.color || '#3b82f6'}22`,
                     color: '#ffffff',
-                    cursor: 'pointer',
-                    display: 'flex',
+                    display: 'inline-flex',
                     alignItems: 'center',
-                    gap: 5,
+                    gap: 6,
                   }}
                 >
-                  <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: t.color }} />
-                  {t.name}
-                </button>
+                  <button
+                    type="button"
+                    onClick={() => handleApplyBatchTag(t.id)}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: '#ffffff',
+                      cursor: 'pointer',
+                      padding: 0,
+                      display: 'inline-flex',
+                      alignItems: 'center',
+                      gap: 5,
+                      fontSize: '0.78rem',
+                    }}
+                  >
+                    <span style={{ width: 8, height: 8, borderRadius: '50%', backgroundColor: t.color }} />
+                    {t.name}
+                  </button>
+                  <button
+                    type="button"
+                    onClick={(e) => handleDeleteTagGlobal(t.id, e)}
+                    title={`Delete tag "${t.name}" globally`}
+                    style={{
+                      background: 'transparent',
+                      border: 'none',
+                      color: 'var(--text-muted)',
+                      cursor: 'pointer',
+                      padding: 0,
+                      display: 'flex',
+                    }}
+                  >
+                    <X size={12} />
+                  </button>
+                </div>
               ))}
             </div>
 
             {/* Create new tag */}
-            <form onSubmit={handleCreateAndApplyBatchTag} style={{ display: 'flex', gap: 8 }}>
-              <input
-                type="text"
-                placeholder="Or create new tag..."
-                value={newTagInput}
-                onChange={(e) => setNewTagInput(e.target.value)}
-                style={{
-                  flex: 1,
-                  padding: '6px 12px',
-                  borderRadius: 'var(--radius-sm)',
-                  backgroundColor: 'rgba(255, 255, 255, 0.05)',
-                  border: '1px solid var(--surface-glass-border)',
-                  color: '#ffffff',
-                  fontSize: '0.8rem',
-                }}
-              />
-              <button type="submit" disabled={!newTagInput.trim()} className="btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
-                <Plus size={14} /> Add
-              </button>
+            <form onSubmit={handleCreateAndApplyBatchTag} style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
+              <div style={{ display: 'flex', gap: 8 }}>
+                <input
+                  type="text"
+                  placeholder="Or create new tag..."
+                  value={newTagInput}
+                  onChange={(e) => setNewTagInput(e.target.value)}
+                  style={{
+                    flex: 1,
+                    padding: '6px 12px',
+                    borderRadius: 'var(--radius-sm)',
+                    backgroundColor: 'rgba(255, 255, 255, 0.05)',
+                    border: '1px solid var(--surface-glass-border)',
+                    color: '#ffffff',
+                    fontSize: '0.8rem',
+                  }}
+                />
+                <button type="submit" disabled={!newTagInput.trim()} className="btn-primary" style={{ padding: '6px 12px', fontSize: '0.8rem' }}>
+                  <Plus size={14} /> Add
+                </button>
+              </div>
+              <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                <span style={{ fontSize: '0.72rem', color: 'var(--text-muted)' }}>Color:</span>
+                {TAG_COLORS.map((color) => (
+                  <button
+                    key={color}
+                    type="button"
+                    onClick={() => setNewTagColor(color)}
+                    title={`Select color ${color}`}
+                    style={{
+                      width: 16,
+                      height: 16,
+                      borderRadius: '50%',
+                      backgroundColor: color,
+                      border: newTagColor === color ? '2px solid #ffffff' : '1px solid rgba(255, 255, 255, 0.2)',
+                      cursor: 'pointer',
+                      padding: 0,
+                      transform: newTagColor === color ? 'scale(1.15)' : 'scale(1)',
+                      transition: 'transform 0.1s ease',
+                    }}
+                  />
+                ))}
+              </div>
             </form>
           </div>
         </div>
@@ -1019,7 +1170,7 @@ export const VirtualGallery: React.FC = () => {
               </h3>
             </div>
             <p style={{ fontSize: '0.85rem', color: 'var(--text-secondary)', marginBottom: 20, lineHeight: 1.5 }}>
-              Choose whether to remove the {selectedMediaIds.length} selected files from the Puntano index or delete them permanently from your computer's storage.
+              Choose whether to remove the {selectedMediaIds.length} selected files from the Puntano index or move them to your OS Recycle Bin / Trash.
             </p>
             <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
               <button
@@ -1059,10 +1210,10 @@ export const VirtualGallery: React.FC = () => {
               >
                 <div style={{ fontWeight: 700, fontSize: '0.85rem', display: 'flex', alignItems: 'center', gap: 6 }}>
                   <Trash2 size={13} />
-                  Permanently Delete from Disk
+                  Move to Recycle Bin / Trash
                 </div>
                 <div style={{ fontSize: '0.72rem', color: 'rgba(239, 68, 68, 0.8)' }}>
-                  Warning: Permanently deletes all {selectedMediaIds.length} files from storage. Cannot be undone!
+                  Moves all {selectedMediaIds.length} files to your system Recycle Bin / Trash and removes them from the index.
                 </div>
               </button>
 

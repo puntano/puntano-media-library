@@ -76,8 +76,8 @@ pub fn run() {
             }
 
             // High-speed non-blocking SVG placeholder while generation is processed by daemon.
-            // Avoids blocking Tauri webview asset threads or stalling the UI with synchronous image decoding.
-            let fallback_svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="384" height="288" viewBox="0 0 384 288"><rect width="100%" height="100%" fill="#182234"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#64748b" font-family="sans-serif" font-size="14" font-weight="600">PROCESSING...</text></svg>"##;
+            // Uses 385x289 natural dimensions so the frontend can distinguish pending placeholders from 384px ready thumbnails.
+            let fallback_svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="385" height="289" viewBox="0 0 384 288"><rect width="100%" height="100%" fill="#182234"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#64748b" font-family="sans-serif" font-size="14" font-weight="600">PROCESSING...</text></svg>"##;
             Response::builder()
                 .status(200)
                 .header(header::CONTENT_TYPE, "image/svg+xml")
@@ -125,6 +125,7 @@ pub fn run() {
 
             // Spawn background decoupled thumbnail generation daemon
             ThumbnailWorker::start_daemon(
+                app.handle().clone(),
                 db_path.clone(),
                 app_cache_dir,
                 cancel_worker,
@@ -141,7 +142,7 @@ pub fn run() {
                 }).unwrap_or_default()
             };
 
-            crate::indexer::LibraryWatcher::start_watching(
+            let watcher_tx = crate::indexer::LibraryWatcher::start_watching(
                 app.handle().clone(),
                 db_path.clone(),
                 watched_libraries,
@@ -151,6 +152,7 @@ pub fn run() {
             app.manage(AppState {
                 db_path,
                 cancel_token,
+                watcher_tx: std::sync::Mutex::new(watcher_tx),
             });
 
             Ok(())
@@ -180,6 +182,8 @@ pub fn run() {
             commands::media::create_album,
             commands::media::get_albums,
             commands::media::delete_album,
+            commands::media::update_album,
+            commands::media::get_media_albums,
             commands::media::add_media_to_album,
             commands::media::remove_media_from_album,
             commands::media::create_tag,
@@ -194,6 +198,7 @@ pub fn run() {
             commands::media::batch_add_media_to_album,
             commands::media::get_library_stats,
             commands::media::set_media_orientation,
+            commands::media::resolve_location_name,
             commands::media::export_media_files,
         ])
         .run(tauri::generate_context!())

@@ -97,6 +97,8 @@ pub struct SpatialClusterPoint {
     pub captured_at: Option<i64>,
     pub thumbnail_path: Option<String>,
     pub media_type: String,
+    pub is_favorite: bool,
+    pub rating: u32,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

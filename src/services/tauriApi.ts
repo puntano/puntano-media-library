@@ -88,16 +88,18 @@ export const tauriApi = {
     maxLat: number,
     minLon: number,
     maxLon: number,
-    limit: number = 10000
+    limit: number = 10000,
+    albumId?: number | null,
+    tagId?: number | null
   ): Promise<SpatialClusterPoint[]> {
     if (!isTauri()) {
       // Mock spatial data for browser development
       return [
-        { id: 1, latitude: 37.7749, longitude: -122.4194, file_path: '/photos/sf.jpg', file_hash: 'mock_sf', media_type: 'photo' },
-        { id: 2, latitude: 37.7833, longitude: -122.4167, file_path: '/photos/bay.jpg', file_hash: 'mock_bay', media_type: 'photo' },
-        { id: 3, latitude: 34.0522, longitude: -118.2437, file_path: '/photos/la.mov', file_hash: 'mock_la', media_type: 'video' },
-        { id: 4, latitude: 40.7128, longitude: -74.0060, file_path: '/photos/nyc.jpg', file_hash: 'mock_nyc', media_type: 'photo' },
-        { id: 5, latitude: 51.5074, longitude: -0.1278, file_path: '/photos/london.jpg', file_hash: 'mock_london', media_type: 'photo' },
+        { id: 1, latitude: 37.7749, longitude: -122.4194, file_path: '/photos/sf.jpg', file_hash: 'mock_sf', media_type: 'photo', is_favorite: true, rating: 5 },
+        { id: 2, latitude: 37.7833, longitude: -122.4167, file_path: '/photos/bay.jpg', file_hash: 'mock_bay', media_type: 'photo', is_favorite: false, rating: 4 },
+        { id: 3, latitude: 34.0522, longitude: -118.2437, file_path: '/photos/la.mov', file_hash: 'mock_la', media_type: 'video', is_favorite: false, rating: 0 },
+        { id: 4, latitude: 40.7128, longitude: -74.0060, file_path: '/photos/nyc.jpg', file_hash: 'mock_nyc', media_type: 'photo', is_favorite: true, rating: 3 },
+        { id: 5, latitude: 51.5074, longitude: -0.1278, file_path: '/photos/london.jpg', file_hash: 'mock_london', media_type: 'photo', is_favorite: false, rating: 0 },
       ];
     }
     return await invoke<SpatialClusterPoint[]>('query_spatial_bounding_box', {
@@ -106,6 +108,8 @@ export const tauriApi = {
       minLon,
       maxLon,
       limit,
+      albumId: albumId ?? null,
+      tagId: tagId ?? null,
     });
   },
 
@@ -330,6 +334,39 @@ export const tauriApi = {
     await invoke('delete_album', { id });
   },
 
+  async updateAlbum(
+    id: number,
+    name: string,
+    description?: string | null,
+    coverMediaId?: number | null
+  ): Promise<void> {
+    if (!isTauri()) {
+      console.warn('[Mock] updateAlbum:', id, name, description, coverMediaId);
+      return;
+    }
+    await invoke('update_album', {
+      id,
+      name,
+      description: description ?? null,
+      coverMediaId: coverMediaId ?? null,
+    });
+  },
+
+  async getMediaAlbums(mediaId: number): Promise<Album[]> {
+    if (!isTauri()) {
+      return [
+        {
+          id: 1,
+          name: 'Summer Trip 2026',
+          description: 'Highlights from the coast',
+          media_count: 24,
+          created_at: Date.now() - 86400000 * 5,
+        },
+      ];
+    }
+    return await invoke<Album[]>('get_media_albums', { mediaId });
+  },
+
   async addMediaToAlbum(albumId: number, mediaIds: number[]): Promise<void> {
     if (!isTauri()) return;
     await invoke('add_media_to_album', { albumId, mediaIds });
@@ -438,6 +475,19 @@ export const tauriApi = {
     await invoke('set_media_orientation', { id, orientation });
   },
 
+  async resolveLocationName(latitude: number, longitude: number): Promise<string | null> {
+    if (!isTauri()) {
+      if (Math.abs(latitude - 37.7749) < 1 && Math.abs(longitude - -122.4194) < 1) {
+        return 'San Francisco, United States';
+      }
+      if (Math.abs(latitude - 35.6762) < 1 && Math.abs(longitude - 139.6503) < 1) {
+        return 'Tokyo, Japan';
+      }
+      return null;
+    }
+    return await invoke<string | null>('resolve_location_name', { latitude, longitude });
+  },
+
   async exportMediaFiles(sourcePaths: string[], destinationFolder: string): Promise<number> {
     if (!isTauri()) {
       console.warn('[Mock] exportMediaFiles to:', destinationFolder, sourcePaths.length);
@@ -482,7 +532,7 @@ export const tauriApi = {
   async getDiagnosticReport(): Promise<DiagnosticReport> {
     if (!isTauri()) {
       return {
-        app_version: '0.3.0',
+        app_version: '0.4.0',
         os_name: 'windows',
         os_family: 'windows',
         arch: 'x86_64',
@@ -516,6 +566,15 @@ export const tauriApi = {
       return Promise.resolve(() => {});
     }
     return listen<string>('library-incremental-sync', (event) => {
+      callback(event.payload);
+    });
+  },
+
+  onThumbnailsReady(callback: (readyCount: number) => void): Promise<UnlistenFn> {
+    if (!isTauri()) {
+      return Promise.resolve(() => {});
+    }
+    return listen<number>('thumbnails-ready', (event) => {
       callback(event.payload);
     });
   },

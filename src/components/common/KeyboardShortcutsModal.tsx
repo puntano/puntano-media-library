@@ -31,10 +31,15 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
     category: 'Lightbox Fullscreen Viewer',
     shortcuts: [
       { keys: ['←', '→'], description: 'Navigate Previous / Next media item' },
+      { keys: ['S'], description: 'Start / Pause auto-advancing Slideshow' },
+      { keys: ['F'], description: 'Toggle Favorite on current item' },
+      { keys: ['1', '—', '5'], description: 'Rate current item 1 to 5 stars' },
+      { keys: ['R'], description: 'Rotate photo / RAW 90° clockwise' },
+      { keys: ['+', '—', 'Scroll'], description: 'Zoom in / Zoom out (Drag to pan)' },
+      { keys: ['0'], description: 'Reset zoom and pan to 100%' },
+      { keys: ['I'], description: 'Open Metadata Inspector for current item' },
+      { keys: ['Del'], description: 'Delete or move current item to Trash' },
       { keys: ['Space'], description: 'Play / Pause video playback' },
-      { keys: ['+', '—'], description: 'Zoom in / Zoom out' },
-      { keys: ['0'], description: 'Reset zoom to 100%' },
-      { keys: ['I'], description: 'Open Inspector for current item' },
     ],
   },
 ];

@@ -1,5 +1,5 @@
 import { create } from 'zustand';
-import { IndexingProgressEvent, MediaItem } from '../types/media';
+import { IndexingProgressEvent, MapFocusTarget, MediaItem } from '../types/media';
 
 interface LibraryState {
   activeView: 'map' | 'timeline' | 'gallery' | 'albums';
@@ -35,8 +35,12 @@ interface LibraryState {
   // Keyboard Shortcuts Modal State
   isShortcutsModalOpen: boolean;
 
-  // Reactive Sync Revision (triggers view reloads on background watcher sync)
+  // Reactive Sync & Thumbnail Revisions
   syncRevision: number;
+  thumbnailRevision: number;
+
+  // Map Fly-To Target (set by "View on Map" in MetadataDrawer)
+  mapFocusTarget: MapFocusTarget | null;
 
   setActiveView: (view: 'map' | 'timeline' | 'gallery' | 'albums') => void;
   setTotalMediaCount: (count: number) => void;
@@ -46,6 +50,8 @@ interface LibraryState {
   setInspectorOpen: (open: boolean) => void;
   setMediaTypeFilter: (filter: 'all' | 'photo' | 'video') => void;
   incrementSyncRevision: () => void;
+  incrementThumbnailRevision: () => void;
+  setMapFocusTarget: (target: MapFocusTarget | null) => void;
 
   setSearchQuery: (query: string) => void;
   setHasGpsOnly: (hasGps: boolean) => void;
@@ -97,6 +103,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   isInspectorOpen: false,
   mediaTypeFilter: 'all',
   syncRevision: 0,
+  thumbnailRevision: 0,
+  mapFocusTarget: null,
 
   searchQuery: '',
   hasGpsOnly: false,
@@ -124,6 +132,8 @@ export const useLibraryStore = create<LibraryState>((set, get) => ({
   setInspectorOpen: (isInspectorOpen) => set({ isInspectorOpen }),
   setMediaTypeFilter: (mediaTypeFilter) => set({ mediaTypeFilter }),
   incrementSyncRevision: () => set((state) => ({ syncRevision: state.syncRevision + 1 })),
+  incrementThumbnailRevision: () => set((state) => ({ thumbnailRevision: state.thumbnailRevision + 1 })),
+  setMapFocusTarget: (mapFocusTarget) => set({ mapFocusTarget }),
 
   sortBy: 'date',
   sortOrder: 'desc',

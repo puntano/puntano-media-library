@@ -1,5 +1,7 @@
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::mpsc::Sender;
 use std::sync::Arc;
 use std::time::Duration;
 
@@ -12,20 +14,24 @@ use crate::indexer::pipeline::IndexingPipeline;
 use crate::metadata::{PhotoMetadataParser, VideoMetadataParser};
 use crate::models::MediaItem;
 
+#[derive(Debug, Clone)]
+pub enum WatcherCommand {
+    Watch(PathBuf),
+    Unwatch(PathBuf),
+}
+
 pub struct LibraryWatcher;
 
 impl LibraryWatcher {
     /// Spawns a cross-platform live directory watcher for watched libraries.
-    /// Utilizes ReadDirectoryChangesW on Windows and FSEvents on macOS with debouncing.
+    /// Utilizes ReadDirectoryChangesW on Windows and FSEvents on macOS with dynamic path registration.
     pub fn start_watching(
         app_handle: AppHandle,
         db_path: PathBuf,
         watched_paths: Vec<PathBuf>,
         cancel_token: Arc<AtomicBool>,
-    ) {
-        if watched_paths.is_empty() {
-            return;
-        }
+    ) -> Sender<WatcherCommand> {
+        let (cmd_tx, cmd_rx) = std::sync::mpsc::channel::<WatcherCommand>();
 
         std::thread::Builder::new()
             .name("library-watcher".into())
@@ -35,25 +41,51 @@ impl LibraryWatcher {
                 let mut watcher = match RecommendedWatcher::new(tx, Config::default()) {
                     Ok(w) => w,
                     Err(e) => {
-                        eprintln!("[LibraryWatcher] Failed to initialize watcher: {}", e);
+                        log::error!("[LibraryWatcher] Failed to initialize watcher: {}", e);
                         return;
                     }
                 };
 
-                for path in &watched_paths {
-                    if path.exists() {
-                        let _ = watcher.watch(path, RecursiveMode::Recursive);
-                        println!("[LibraryWatcher] Monitoring directory: {:?}", path);
+                let mut watched_set: HashSet<PathBuf> = HashSet::new();
+
+                for path in watched_paths {
+                    if path.exists() && !watched_set.contains(&path) {
+                        if watcher.watch(&path, RecursiveMode::Recursive).is_ok() {
+                            log::info!("[LibraryWatcher] Monitoring directory: {:?}", path);
+                            watched_set.insert(path);
+                        }
                     }
                 }
 
                 while !cancel_token.load(Ordering::Relaxed) {
-                    if let Ok(Ok(event)) = rx.recv_timeout(Duration::from_millis(500)) {
+                    // Process any dynamic Watch / Unwatch commands
+                    while let Ok(cmd) = cmd_rx.try_recv() {
+                        match cmd {
+                            WatcherCommand::Watch(path) => {
+                                if path.exists() && !watched_set.contains(&path) {
+                                    if watcher.watch(&path, RecursiveMode::Recursive).is_ok() {
+                                        log::info!("[LibraryWatcher] Dynamically watching directory: {:?}", path);
+                                        watched_set.insert(path);
+                                    }
+                                }
+                            }
+                            WatcherCommand::Unwatch(path) => {
+                                if watched_set.remove(&path) {
+                                    let _ = watcher.unwatch(&path);
+                                    log::info!("[LibraryWatcher] Stopped watching directory: {:?}", path);
+                                }
+                            }
+                        }
+                    }
+
+                    if let Ok(Ok(event)) = rx.recv_timeout(Duration::from_millis(300)) {
                         Self::handle_fs_event(&app_handle, &db_path, event);
                     }
                 }
             })
             .expect("Failed to spawn library watcher thread");
+
+        cmd_tx
     }
 
     fn handle_fs_event(app_handle: &AppHandle, db_path: &Path, event: Event) {
@@ -125,9 +157,8 @@ impl LibraryWatcher {
             .unwrap_or("")
             .to_lowercase();
 
-        let is_video = matches!(ext.as_str(), "mp4" | "mov" | "m4v" | "mkv" | "webm" | "avi");
-        let media_type = if is_video { "video" } else { "photo" };
-        let mime_type = if is_video { "video/mp4" } else { "image/jpeg" };
+        let (media_type, mime_type) = crate::indexer::walker::DirectoryWalker::classify_media(&ext);
+        let is_video = media_type == "video";
 
         let hash = IndexingPipeline::compute_fast_hash(path, file_size);
         let now = chrono::Utc::now().timestamp_millis();
@@ -141,8 +172,8 @@ impl LibraryWatcher {
             file_size,
             file_modified_at: mtime,
             file_hash: hash,
-            mime_type: mime_type.into(),
-            media_type: media_type.into(),
+            mime_type,
+            media_type,
             width: None,
             height: None,
             duration: None,

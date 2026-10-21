@@ -1,5 +1,5 @@
 import React, { useEffect, useState } from 'react';
-import { FolderHeart, Plus, Trash2, Calendar, Image as ImageIcon, X } from 'lucide-react';
+import { FolderHeart, Plus, Trash2, Edit2, Calendar, Image as ImageIcon, X } from 'lucide-react';
 import { tauriApi } from '../../services/tauriApi';
 import { Album } from '../../types/media';
 import { MediaThumbnail } from '../common/MediaThumbnail';
@@ -9,10 +9,11 @@ export const AlbumsView: React.FC = () => {
   const [albums, setAlbums] = useState<Album[]>([]);
   const [isLoading, setIsLoading] = useState<boolean>(true);
   const [showCreateModal, setShowCreateModal] = useState<boolean>(false);
+  const [editingAlbum, setEditingAlbum] = useState<Album | null>(null);
   const [newAlbumName, setNewAlbumName] = useState<string>('');
   const [newAlbumDesc, setNewAlbumDesc] = useState<string>('');
 
-  const { setSelectedAlbumId, setActiveView, syncRevision } = useLibraryStore();
+  const { setSelectedAlbumId, setActiveView, syncRevision, incrementSyncRevision } = useLibraryStore();
 
   const loadAlbums = async () => {
     setIsLoading(true);
@@ -30,18 +31,44 @@ export const AlbumsView: React.FC = () => {
     loadAlbums();
   }, [syncRevision]);
 
-  const handleCreateAlbum = async (e: React.FormEvent) => {
+  const handleOpenCreateModal = () => {
+    setEditingAlbum(null);
+    setNewAlbumName('');
+    setNewAlbumDesc('');
+    setShowCreateModal(true);
+  };
+
+  const handleOpenEditModal = (e: React.MouseEvent, album: Album) => {
+    e.stopPropagation();
+    setEditingAlbum(album);
+    setNewAlbumName(album.name);
+    setNewAlbumDesc(album.description || '');
+    setShowCreateModal(true);
+  };
+
+  const handleSaveAlbum = async (e: React.FormEvent) => {
     e.preventDefault();
     if (!newAlbumName.trim()) return;
 
     try {
-      await tauriApi.createAlbum(newAlbumName.trim(), newAlbumDesc.trim() || undefined);
+      if (editingAlbum) {
+        await tauriApi.updateAlbum(
+          editingAlbum.id,
+          newAlbumName.trim(),
+          newAlbumDesc.trim() || null,
+          editingAlbum.cover_media_id ?? null
+        );
+      } else {
+        await tauriApi.createAlbum(newAlbumName.trim(), newAlbumDesc.trim() || undefined);
+      }
       setNewAlbumName('');
       setNewAlbumDesc('');
+      setEditingAlbum(null);
       setShowCreateModal(false);
+      incrementSyncRevision();
       await loadAlbums();
     } catch (err) {
-      console.error('Failed to create album:', err);
+      console.error('Failed to save album:', err);
     }
   };
 
@@ -93,7 +120,7 @@ export const AlbumsView: React.FC = () => {
 
         <button
           className="btn-primary"
-          onClick={() => setShowCreateModal(true)}
+          onClick={handleOpenCreateModal}
           style={{ display: 'flex', alignItems: 'center', gap: 6 }}
         >
           <Plus size={16} />
@@ -140,7 +167,7 @@ export const AlbumsView: React.FC = () => {
           </div>
           <button
             className="btn-primary"
-            onClick={() => setShowCreateModal(true)}
+            onClick={handleOpenCreateModal}
             style={{ display: 'flex', alignItems: 'center', gap: 6, marginTop: 4 }}
           >
             <Plus size={16} />
@@ -239,21 +266,38 @@ export const AlbumsView: React.FC = () => {
                   >
                     {album.name}
                   </div>
-                  <button
-                    className="btn-secondary"
-                    onClick={(e) => handleDeleteAlbum(e, album)}
-                    title="Delete album"
-                    style={{
-                      padding: 4,
-                      color: 'var(--text-muted)',
-                      border: 'none',
-                      background: 'transparent',
-                    }}
-                    onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--status-danger)')}
-                    onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
-                  >
-                    <Trash2 size={14} />
-                  </button>
+                  <div style={{ display: 'flex', alignItems: 'center', gap: 2 }}>
+                    <button
+                      className="btn-secondary"
+                      onClick={(e) => handleOpenEditModal(e, album)}
+                      title="Edit album name or description"
+                      style={{
+                        padding: 4,
+                        color: 'var(--text-muted)',
+                        border: 'none',
+                        background: 'transparent',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--accent-primary)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
+                    >
+                      <Edit2 size={14} />
+                    </button>
+                    <button
+                      className="btn-secondary"
+                      onClick={(e) => handleDeleteAlbum(e, album)}
+                      title="Delete album"
+                      style={{
+                        padding: 4,
+                        color: 'var(--text-muted)',
+                        border: 'none',
+                        background: 'transparent',
+                      }}
+                      onMouseEnter={(e) => (e.currentTarget.style.color = 'var(--status-danger)')}
+                      onMouseLeave={(e) => (e.currentTarget.style.color = 'var(--text-muted)')}
+                    >
+                      <Trash2 size={14} />
+                    </button>
+                  </div>
                 </div>
 
                 {album.description && (
@@ -306,16 +350,21 @@ export const AlbumsView: React.FC = () => {
             }}
           >
             <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center' }}>
-              <h3 style={{ fontWeight: 700, fontSize: '1.15rem', margin: 0 }}>Create New Album</h3>
+              <h3 style={{ fontWeight: 700, fontSize: '1.15rem', margin: 0 }}>
+                {editingAlbum ? 'Edit Album' : 'Create New Album'}
+              </h3>
               <button
-                onClick={() => setShowCreateModal(false)}
+                onClick={() => {
+                  setEditingAlbum(null);
+                  setShowCreateModal(false);
+                }}
                 style={{ background: 'transparent', border: 'none', color: 'var(--text-muted)', cursor: 'pointer' }}
               >
                 <X size={18} />
               </button>
             </div>
 
-            <form onSubmit={handleCreateAlbum} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
+            <form onSubmit={handleSaveAlbum} style={{ display: 'flex', flexDirection: 'column', gap: 14 }}>
               <div>
                 <label style={{ display: 'block', fontSize: '0.8rem', fontWeight: 600, color: 'var(--text-secondary)', marginBottom: 6 }}>
                   Album Name *
@@ -367,7 +416,10 @@ export const AlbumsView: React.FC = () => {
                 <button
                   type="button"
                   className="btn-secondary"
-                  onClick={() => setShowCreateModal(false)}
+                  onClick={() => {
+                    setEditingAlbum(null);
+                    setShowCreateModal(false);
+                  }}
                 >
                   Cancel
                 </button>
@@ -376,7 +428,7 @@ export const AlbumsView: React.FC = () => {
                   className="btn-primary"
                   disabled={!newAlbumName.trim()}
                 >
-                  Create Album
+                  {editingAlbum ? 'Save Changes' : 'Create Album'}
                 </button>
               </div>
             </form>
