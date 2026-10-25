@@ -103,6 +103,67 @@ pub fn log_frontend_event(level: String, source: String, message: String) {
     logger::log_frontend(&level, &source, &message);
 }
 
+/// Gracefully stops background daemons, checkpoints SQLite WAL, and flushes logs prior to applying an in-app update.
+#[tauri::command]
+pub fn prepare_for_update_restart(
+    target_version: String,
+    state: State<'_, AppState>,
+) -> Result<(), String> {
+    use std::sync::atomic::Ordering;
+
+    log::info!(
+        "[Updater] Preparing graceful daemon shutdown & SQLite WAL checkpoint for update to v{}...",
+        target_version
+    );
+
+    state.indexing_cancel_token.store(true, Ordering::SeqCst);
+    state.shutdown_token.store(true, Ordering::SeqCst);
+
+    if let Ok(conn) = DatabaseManager::open(&state.db_path) {
+        let _ = conn.execute_batch("PRAGMA wal_checkpoint(TRUNCATE);");
+    }
+
+    logger::flush();
+    Ok(())
+}
+
+/// Opens an official Puntano GitHub Releases page in the user's system browser.
+#[tauri::command]
+pub fn open_release_page(url: String) -> Result<(), String> {
+    let trimmed = url.trim();
+    if !trimmed.starts_with("https://github.com/puntano/puntano-media-library")
+        || trimmed.chars().any(|c| c.is_whitespace() || c == '"' || c == '\'')
+    {
+        return Err("Blocked untrusted external URL".to_string());
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        std::process::Command::new("explorer")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|e| format!("Failed to open browser: {}", e))?;
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        std::process::Command::new("open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|e| format!("Failed to open browser: {}", e))?;
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        std::process::Command::new("xdg-open")
+            .arg(trimmed)
+            .spawn()
+            .map_err(|e| format!("Failed to open browser: {}", e))?;
+    }
+
+    Ok(())
+}
+
 #[tauri::command]
 pub fn get_logs(max_lines: Option<usize>) -> Result<Vec<String>, String> {
     let limit = max_lines.unwrap_or(150);

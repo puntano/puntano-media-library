@@ -1,0 +1,333 @@
+name: Publish Release & Updater
+
+on:
+  push:
+    tags:
+      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: 'Existing version tag to build and publish (e.g. v0.4.2)'
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+jobs:
+  prepare-release:
+    name: Prepare Draft Release
+    runs-on: ubuntu-latest
+    outputs:
+      release_id: ${{ steps.draft.outputs.release_id }}
+      tag: ${{ steps.draft.outputs.tag }}
+      version: ${{ steps.draft.outputs.version }}
+    steps:
+      - name: Create or Reuse Draft Release
+        id: draft
+        uses: actions/github-script@v7
+        env:
+          INPUT_TAG: ${{ github.event.inputs.tag }}
+        with:
+          script: |
+            const rawTag = (process.env.INPUT_TAG || context.ref.replace('refs/tags/', '')).trim();
+            if (!rawTag.startsWith('v')) {
+              core.setFailed(`Expected version tag starting with 'v', got '${rawTag}'`);
+              return;
+            }
+            const version = rawTag.replace(/^v/, '');
+            const { owner, repo } = context.repo;
+
+            let release = null;
+            const { data: releases } = await octokit.rest.repos.listReleases({
+              owner,
+              repo,
+              per_page: 30,
+            });
+            release = releases.find((r) => r.tag_name === rawTag) || null;
+
+            if (!release) {
+              const created = await octokit.rest.repos.createRelease({
+                owner,
+                repo,
+                tag_name: rawTag,
+                name: `Puntano Media Library ${rawTag}`,
+                draft: true,
+                prerelease: rawTag.includes('-'),
+                generate_release_notes: true,
+              });
+              release = created.data;
+              core.info(`Created draft release #${release.id} for ${rawTag}`);
+            } else {
+              core.info(`Reusing existing release #${release.id} for ${rawTag}`);
+            }
+
+            core.setOutput('release_id', String(release.id));
+            core.setOutput('tag', rawTag);
+            core.setOutput('version', version);
+
+  build-tauri:
+    name: Build & Sign (${{ matrix.label }})
+    needs: prepare-release
+    runs-on: ${{ matrix.platform }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - label: windows-x86_64
+            platform: windows-latest
+            rust_target: x86_64-pc-windows-msvc
+            tauri_args: --target x86_64-pc-windows-msvc
+          - label: darwin-aarch64
+            platform: macos-latest
+            rust_target: aarch64-apple-darwin
+            tauri_args: --target aarch64-apple-darwin
+          - label: darwin-x86_64
+            platform: macos-latest
+            rust_target: x86_64-apple-darwin
+            tauri_args: --target x86_64-apple-darwin
+
+    steps:
+      - name: Checkout Repository
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.prepare-release.outputs.tag }}
+
+      - name: Verify Tauri Updater Signing Key Secret
+        shell: bash
+        env:
+          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+        run: |
+          if [ -z "$SIGNING_KEY" ]; then
+            echo "::error::Missing TAURI_SIGNING_PRIVATE_KEY secret in GitHub Repository Settings -> Secrets and variables -> Actions."
+            exit 1
+          fi
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: 'npm'
+
+      - name: Setup Rust Toolchain
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.rust_target }}
+
+      - name: Cache Cargo Build Artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
+          key: ${{ matrix.label }}
+
+      - name: Install Frontend Dependencies
+        run: npm ci
+
+      - name: Run Core Indexing Verification Tests
+        run: npm run test:index
+
+      - name: Build & Upload Signed Tauri Bundles
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          releaseId: ${{ needs.prepare-release.outputs.release_id }}
+          args: ${{ matrix.tauri_args }}
+          uploadUpdaterJson: false
+
+      - name: Backup Signature Files Artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: sigs-${{ matrix.label }}
+          path: |
+            src-tauri/target/release/bundle/**/*.sig
+            src-tauri/target/*/release/bundle/**/*.sig
+          if-no-files-found: warn
+
+  publish-release:
+    name: Assemble Unified latest.json & Publish
+    needs: [prepare-release, build-tauri]
+    runs-on: ubuntu-latest
+    steps:
+      - name: Download Backup Signature Artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: downloaded-sigs
+
+      - name: Generate Unified latest.json & Finalize Release
+        uses: actions/github-script@v7
+        env:
+          RELEASE_ID: ${{ needs.prepare-release.outputs.release_id }}
+          RELEASE_TAG: ${{ needs.prepare-release.outputs.tag }}
+          RELEASE_VERSION: ${{ needs.prepare-release.outputs.version }}
+        with:
+          script: |
+            const fs = require('fs');
+            const path = require('path');
+
+            const releaseId = Number(process.env.RELEASE_ID);
+            const tag = process.env.RELEASE_TAG;
+            const version = process.env.RELEASE_VERSION;
+            const { owner, repo } = context.repo;
+
+            // Collect local backup .sig files if needed
+            const localSigs = new Map();
+            function walkSigs(dir) {
+              if (!fs.existsSync(dir)) return;
+              for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+                const full = path.join(dir, entry.name);
+                if (entry.isDirectory()) {
+                  walkSigs(full);
+                } else if (entry.name.endsWith('.sig')) {
+                  const normalized = entry.name.replace(/ /g, '.');
+                  const content = fs.readFileSync(full, 'utf8').trim();
+                  localSigs.set(entry.name, content);
+                  localSigs.set(normalized, content);
+                }
+              }
+            }
+            walkSigs('downloaded-sigs');
+
+            const { data: release } = await octokit.rest.repos.getRelease({
+              owner,
+              repo,
+              release_id: releaseId,
+            });
+
+            const { data: assets } = await octokit.rest.repos.listReleaseAssets({
+              owner,
+              repo,
+              release_id: releaseId,
+              per_page: 100,
+            });
+
+            async function getSignatureForAsset(assetName) {
+              const sigAssetName = `${assetName}.sig`;
+              const sigAsset = assets.find((a) => a.name === sigAssetName);
+              if (sigAsset) {
+                const res = await octokit.rest.repos.getReleaseAsset({
+                  owner,
+                  repo,
+                  asset_id: sigAsset.id,
+                  headers: { accept: 'application/octet-stream' },
+                });
+                return typeof res.data === 'string'
+                  ? res.data.trim()
+                  : Buffer.from(res.data).toString('utf8').trim();
+              }
+              return localSigs.get(sigAssetName) || null;
+            }
+
+            function publicDownloadUrl(assetName) {
+              return `https://github.com/${owner}/${repo}/releases/download/${tag}/${assetName}`;
+            }
+
+            const platforms = {};
+
+            // 1. Windows x86_64 (prefer NSIS *-setup.exe for frictionless per-user updates)
+            const winNsis = assets.find(
+              (a) => a.name.endsWith('-setup.exe') && !a.name.endsWith('.sig')
+            );
+            const winMsi = assets.find(
+              (a) => a.name.endsWith('.msi') && !a.name.endsWith('.sig')
+            );
+            const winAsset = winNsis || winMsi;
+            if (winAsset) {
+              const sig = await getSignatureForAsset(winAsset.name);
+              if (sig) {
+                const entry = {
+                  signature: sig,
+                  url: publicDownloadUrl(winAsset.name),
+                };
+                platforms['windows-x86_64'] = entry;
+                platforms['windows-x86_64-nsis'] = entry;
+              }
+            }
+
+            // 2. macOS Apple Silicon (aarch64 .app.tar.gz)
+            const macArm = assets.find(
+              (a) => a.name.endsWith('_aarch64.app.tar.gz')
+            );
+            if (macArm) {
+              const sig = await getSignatureForAsset(macArm.name);
+              if (sig) {
+                const entry = {
+                  signature: sig,
+                  url: publicDownloadUrl(macArm.name),
+                };
+                platforms['darwin-aarch64'] = entry;
+                platforms['darwin-aarch64-app'] = entry;
+              }
+            }
+
+            // 3. macOS Intel (x86_64 .app.tar.gz)
+            const macIntel = assets.find(
+              (a) =>
+                (a.name.endsWith('_x64.app.tar.gz') ||
+                  a.name.endsWith('_x86_64.app.tar.gz')) &&
+                !a.name.endsWith('_aarch64.app.tar.gz')
+            );
+            if (macIntel) {
+              const sig = await getSignatureForAsset(macIntel.name);
+              if (sig) {
+                const entry = {
+                  signature: sig,
+                  url: publicDownloadUrl(macIntel.name),
+                };
+                platforms['darwin-x86_64'] = entry;
+                platforms['darwin-x86_64-app'] = entry;
+              }
+            }
+
+            if (!platforms['windows-x86_64'] || !platforms['darwin-aarch64']) {
+              core.setFailed(
+                `Incomplete updater platforms assembled: ${JSON.stringify(Object.keys(platforms))}. Verify build artifacts and .sig generation.`
+              );
+              return;
+            }
+
+            const latestManifest = {
+              version,
+              notes: (release.body || `Puntano Media Library ${tag}`).trim(),
+              pub_date: new Date().toISOString(),
+              platforms,
+            };
+
+            const manifestJson = JSON.stringify(latestManifest, null, 2);
+            core.info(`Assembled latest.json:\n${manifestJson}`);
+
+            // Replace existing latest.json if re-running
+            const existingLatest = assets.find((a) => a.name === 'latest.json');
+            if (existingLatest) {
+              await octokit.rest.repos.deleteReleaseAsset({
+                owner,
+                repo,
+                asset_id: existingLatest.id,
+              });
+            }
+
+            await octokit.rest.repos.uploadReleaseAsset({
+              owner,
+              repo,
+              release_id: releaseId,
+              name: 'latest.json',
+              headers: {
+                'content-type': 'application/json',
+                'content-length': Buffer.byteLength(manifestJson),
+              },
+              data: manifestJson,
+            });
+
+            // Publish release atomically now that all binaries, signatures, and latest.json are attached
+            await octokit.rest.repos.updateRelease({
+              owner,
+              repo,
+              release_id: releaseId,
+              tag_name: tag,
+              draft: false,
+              prerelease: tag.includes('-'),
+            });
+
+            core.info(`Successfully published ${tag} with unified cross-platform latest.json!`);

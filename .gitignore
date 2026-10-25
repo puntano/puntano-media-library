@@ -36,7 +36,9 @@ err.txt
 *.swp
 *.swo
 
-# Environment files
+# Environment & Signing Keys
 .env
 .env.*
 !.env.example
+*.key
+*.sig

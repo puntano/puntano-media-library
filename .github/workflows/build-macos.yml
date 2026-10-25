@@ -7,10 +7,8 @@ on:
     branches: [ main ]
 
 jobs:
-  build:
+  verify-macos:
     runs-on: macos-latest
-    permissions:
-      contents: write
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
@@ -24,7 +22,12 @@ jobs:
       - name: Setup Rust Toolchain
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: aarch64-apple-darwin,x86_64-apple-darwin
+          targets: aarch64-apple-darwin
+
+      - name: Cache Cargo Build Artifacts
+        uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: src-tauri
 
       - name: Install Frontend Dependencies
         run: npm ci
@@ -32,28 +35,8 @@ jobs:
       - name: Run Core Indexing Verification Tests
         run: npm run test:index
 
-      - name: Build Tauri Application
-        uses: tauri-apps/tauri-action@v0
-        env:
-          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        with:
-          tagName: v__VERSION__
-          releaseName: 'Puntano Media Library v__VERSION__'
-          releaseBody: |
-            ## What's New in Puntano Media Library v__VERSION__
+      - name: Build Frontend Bundle
+        run: npm run build
 
-            ### 🛠️ Critical Bug Fixes & Stability
-            - **Video ISO 6709 GPS Scanner Fix**: Resolved a slice out-of-bounds panic (`src/metadata/video.rs`) when scanning MP4/MOV coordinates near 8 KB chunk boundaries or binary QuickTime `udta` headers.
-            - **Monotonic Indexing Progress & Smooth UI Updates**: Fixed erratic oscillating file counters and percentages during Stage 2 indexing, added an animated indeterminate discovery bar, guarded against concurrent scans, and moved progress event handling to a single global listener.
-            - **Accurate File Discovery & Automatic Reconciliation**: Canonicalized Windows paths to eliminate case-duplicate database entries, excluded `0`-byte files, symlinks, Windows hidden/system entries, and NAS/auxiliary directories (`@eaDir`, `@Recycle`, `.thumbnails`, `*.lrdata`, `._*`), and automatically pruned deleted or stale records on re-scan.
-            - **Eliminated Stuck `"PROCESSING..."` Thumbnails**:
-              - Decoupled scan cancellation (`indexing_cancel_token`) from daemon lifecycle (`shutdown_token`) so cancelling a scan never stops the background thumbnail worker or live folder watcher.
-              - Added native OS codec thumbnail extraction (Windows WIC / Media Foundation `IShellItemImageFactory` & macOS `sips`) plus `tiff`/`bmp`/`gif`/`ico` support for `.heic`, `.heif`, `.avif`, RAW, and FFmpeg-free video frames.
-              - Prioritized newest items first in the thumbnail queue, added atomic `.tmp.jpg` cache writes, healed previously failed or missing-cache thumbnails automatically on startup, and added progressive retry with graceful fallback tiles for unsupported formats.
-
-            ### 🔍 Production Logging & Diagnostics Overhaul
-            - **Cross-Restart Log Seeding & Sticky Error Buffer**: Seeded in-memory diagnostic logs from the tail of `puntano.log` on launch and added a dedicated sticky alert buffer so `[WARN]`, `[ERROR]`, and `[FATAL]` entries survive app restarts and heavy `INFO` logging.
-            - **Enriched Panic Traces & WebView Error Forwarding**: Added thread names and compact backtraces to the Rust panic hook, plus full-stack `window.onerror`, `unhandledrejection`, and React `ErrorBoundary` forwarding into `puntano.log`.
-            - **Comprehensive Diagnostic Reports & Privacy Redaction**: Included registered library paths/counts, photo/RAW/video/duplicate breakdowns, thumbnail queue health, top file extensions, FFmpeg/CPU/free-disk-space telemetry, cloud-placeholder warnings (OneDrive / Google Drive / iCloud), and a default-enabled **Redact username** toggle when copying reports.
-          releaseDraft: false
-          prerelease: false
+      - name: Run Rust Backend Unit Tests
+        run: cargo test --manifest-path src-tauri/Cargo.toml

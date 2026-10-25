@@ -547,7 +547,7 @@ export const tauriApi = {
   async getDiagnosticReport(): Promise<DiagnosticReport> {
     if (!isTauri()) {
       return {
-        app_version: '0.4.1',
+        app_version: '0.4.2',
         os_name: 'windows',
         os_family: 'windows',
         arch: 'x86_64',
@@ -580,6 +580,19 @@ export const tauriApi = {
       };
     }
     return await invoke<DiagnosticReport>('get_diagnostic_report');
+  },
+
+  async prepareForUpdateRestart(targetVersion: string): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('prepare_for_update_restart', { targetVersion });
+  },
+
+  async openReleasePage(url: string): Promise<void> {
+    if (!isTauri()) {
+      window.open(url, '_blank', 'noopener,noreferrer');
+      return;
+    }
+    await invoke('open_release_page', { url });
   },
 
 

@@ -14,10 +14,13 @@ import {
   MapPin,
   Heart,
   Terminal,
+  ArrowUpCircle,
+  Loader2,
 } from 'lucide-react';
 import { tauriApi } from '../../services/tauriApi';
 import { LibraryInfo, LibraryStats } from '../../types/media';
 import { useLibraryStore } from '../../stores/libraryStore';
+import { useUpdaterStore } from '../../stores/updaterStore';
 import { DiagnosticModal } from './DiagnosticModal';
 
 interface LibrarySettingsModalProps {
@@ -36,6 +39,16 @@ export const LibrarySettingsModal: React.FC<LibrarySettingsModalProps> = ({
   const [rescanStatus, setRescanStatus] = useState<string | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState<boolean>(false);
   const { setTotalMediaCount, incrementSyncRevision, isIndexing } = useLibraryStore();
+  const {
+    currentVersion,
+    status: updaterStatus,
+    updateInfo,
+    lastCheckedAt,
+    errorMessage: updaterError,
+    initUpdater,
+    checkForUpdates,
+    setUpdateModalOpen,
+  } = useUpdaterStore();
 
   const loadLibraries = async () => {
     setIsLoading(true);
@@ -55,7 +68,8 @@ export const LibrarySettingsModal: React.FC<LibrarySettingsModalProps> = ({
 
   useEffect(() => {
     loadLibraries();
-  }, []);
+    initUpdater();
+  }, [initUpdater]);
 
   const handleRemoveLibrary = async (lib: LibraryInfo) => {
     if (!confirm(`Are you sure you want to unlink "${lib.path}"?\n\nThis will remove it from the library index. Your original media files on disk will NOT be deleted.`)) {
@@ -544,6 +558,119 @@ export const LibrarySettingsModal: React.FC<LibrarySettingsModalProps> = ({
                 <Terminal size={13} />
                 View Logs & Diagnostics
               </button>
+            </div>
+
+            {/* Software Updates Card */}
+            <div
+              className="glass-panel"
+              style={{
+                marginTop: 12,
+                padding: '16px 20px',
+                borderRadius: 'var(--radius-md)',
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 16,
+                border: updateInfo
+                  ? '1px solid rgba(16, 185, 129, 0.35)'
+                  : undefined,
+                backgroundColor: updateInfo
+                  ? 'rgba(16, 185, 129, 0.06)'
+                  : undefined,
+              }}
+            >
+              <div>
+                <div style={{ fontWeight: 600, fontSize: '0.875rem', display: 'flex', alignItems: 'center', gap: 8 }}>
+                  <ArrowUpCircle
+                    size={16}
+                    color={updateInfo ? '#10b981' : 'var(--accent-primary)'}
+                  />
+                  Software Updates
+                  <span
+                    style={{
+                      fontSize: '0.7rem',
+                      padding: '2px 7px',
+                      borderRadius: 999,
+                      backgroundColor: 'rgba(255, 255, 255, 0.07)',
+                      color: 'var(--text-secondary)',
+                      fontWeight: 600,
+                    }}
+                  >
+                    v{currentVersion}
+                  </span>
+                </div>
+                <div
+                  style={{
+                    fontSize: '0.75rem',
+                    color:
+                      updaterStatus === 'error'
+                        ? 'var(--status-danger)'
+                        : updateInfo
+                        ? '#34d399'
+                        : updaterStatus === 'up-to-date'
+                        ? '#10b981'
+                        : 'var(--text-muted)',
+                    marginTop: 4,
+                    maxWidth: 440,
+                  }}
+                >
+                  {updaterStatus === 'checking' && 'Checking GitHub Releases for new versions...'}
+                  {updaterStatus === 'downloading' &&
+                    `Downloading Puntano Media Library v${updateInfo?.version}...`}
+                  {updaterStatus === 'installing' &&
+                    `Installing v${updateInfo?.version}...`}
+                  {updaterStatus === 'restarting' && 'Restarting application...'}
+                  {updaterStatus === 'available' &&
+                    updateInfo &&
+                    `Version v${updateInfo.version} is available with signed in-app installation.`}
+                  {updaterStatus === 'up-to-date' &&
+                    `You're running the latest version (v${currentVersion})${
+                      lastCheckedAt
+                        ? ` • Checked ${new Date(lastCheckedAt).toLocaleTimeString([], {
+                            hour: '2-digit',
+                            minute: '2-digit',
+                          })}`
+                        : ''
+                    }.`}
+                  {updaterStatus === 'error' &&
+                    (updaterError || 'Failed to check for updates.')}
+                  {updaterStatus === 'idle' &&
+                    'Automatically checks for signed updates from GitHub Releases on launch.'}
+                </div>
+              </div>
+
+              {updateInfo ? (
+                <button
+                  className="btn-primary"
+                  onClick={() => setUpdateModalOpen(true)}
+                  style={{ padding: '8px 14px', fontSize: '0.8rem', whiteSpace: 'nowrap', gap: 6 }}
+                >
+                  <ArrowUpCircle size={14} />
+                  Install v{updateInfo.version}
+                </button>
+              ) : (
+                <button
+                  className="btn-secondary"
+                  disabled={updaterStatus === 'checking'}
+                  onClick={() =>
+                    checkForUpdates({ silent: false, openModalOnAvailable: true })
+                  }
+                  style={{
+                    padding: '8px 14px',
+                    fontSize: '0.8rem',
+                    whiteSpace: 'nowrap',
+                    gap: 6,
+                    opacity: updaterStatus === 'checking' ? 0.65 : 1,
+                  }}
+                >
+                  {updaterStatus === 'checking' ? (
+                    <Loader2 size={13} className="animate-spin" />
+                  ) : (
+                    <RefreshCw size={13} />
+                  )}
+                  {updaterStatus === 'checking' ? 'Checking...' : 'Check for Updates'}
+                </button>
+              )}
             </div>
           </div>
         </div>

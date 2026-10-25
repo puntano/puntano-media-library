@@ -12,8 +12,10 @@ import {
   Keyboard,
   Terminal,
   Loader2,
+  ArrowUpCircle,
 } from 'lucide-react';
 import { useLibraryStore } from './stores/libraryStore';
+import { useUpdaterStore } from './stores/updaterStore';
 import { tauriApi } from './services/tauriApi';
 import { MapView } from './components/map/MapView';
 import { TimelineView } from './components/timeline/TimelineView';
@@ -27,6 +29,7 @@ import { LibrarySettingsModal } from './components/settings/LibrarySettingsModal
 import { DuplicatesModal } from './components/duplicates/DuplicatesModal';
 import { KeyboardShortcutsModal } from './components/common/KeyboardShortcutsModal';
 import { DiagnosticModal } from './components/settings/DiagnosticModal';
+import { UpdateModal } from './components/settings/UpdateModal';
 
 export const App: React.FC = () => {
   const {
@@ -49,11 +52,37 @@ export const App: React.FC = () => {
   const [showIndexModal, setShowIndexModal] = useState(false);
   const [showSettingsModal, setShowSettingsModal] = useState(false);
   const [showDiagnosticModal, setShowDiagnosticModal] = useState(false);
+  const {
+    status: updaterStatus,
+    updateInfo,
+    checkForUpdates,
+    setUpdateModalOpen,
+  } = useUpdaterStore();
 
   // Initialize total count on launch
   useEffect(() => {
     tauriApi.getTotalMediaCount().then((count) => setTotalMediaCount(count)).catch(console.error);
   }, [setTotalMediaCount]);
+
+  // Silent background auto-update check on startup (delayed 3.5s) and every 6 hours
+  useEffect(() => {
+    const startupTimer = setTimeout(() => {
+      if (!useLibraryStore.getState().isIndexing) {
+        checkForUpdates({ silent: true });
+      }
+    }, 3500);
+
+    const periodicTimer = setInterval(() => {
+      if (!useLibraryStore.getState().isIndexing) {
+        checkForUpdates({ silent: true });
+      }
+    }, 6 * 60 * 60 * 1000);
+
+    return () => {
+      clearTimeout(startupTimer);
+      clearInterval(periodicTimer);
+    };
+  }, [checkForUpdates]);
 
   // Global keyboard shortcuts
   useEffect(() => {
@@ -390,6 +419,37 @@ export const App: React.FC = () => {
             <Terminal size={16} />
           </button>
 
+          {/* Software Update Notification Badge */}
+          {updateInfo && (
+            <button
+              onClick={() => setUpdateModalOpen(true)}
+              title={`Puntano Media Library v${updateInfo.version} is available`}
+              style={{
+                padding: '7px 12px',
+                borderRadius: 'var(--radius-md)',
+                border: '1px solid rgba(16, 185, 129, 0.45)',
+                backgroundColor: 'rgba(16, 185, 129, 0.14)',
+                color: '#34d399',
+                fontWeight: 700,
+                fontSize: '0.78rem',
+                cursor: 'pointer',
+                display: 'inline-flex',
+                alignItems: 'center',
+                gap: 6,
+                transition: 'all 0.15s ease',
+              }}
+            >
+              {updaterStatus === 'downloading' ||
+              updaterStatus === 'installing' ||
+              updaterStatus === 'restarting' ? (
+                <Loader2 size={14} className="animate-spin" />
+              ) : (
+                <ArrowUpCircle size={15} />
+              )}
+              Update v{updateInfo.version}
+            </button>
+          )}
+
           {/* Indexing Trigger Button */}
           <button className="btn-primary" onClick={() => setShowIndexModal(true)} style={{ gap: 6 }}>
             {isIndexing ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
@@ -427,6 +487,9 @@ export const App: React.FC = () => {
       {showDiagnosticModal && (
         <DiagnosticModal onClose={() => setShowDiagnosticModal(false)} />
       )}
+
+      {/* Software Auto-Update Modal */}
+      <UpdateModal />
 
       {/* Keyboard Shortcuts Modal */}
       <KeyboardShortcutsModal />

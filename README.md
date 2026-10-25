@@ -32,28 +32,30 @@
 16. **🌍 Offline Reverse Geocoding & Place-Name Search:** Built-in global gazetteer with Haversine distance lookup and bounding-box search (e.g., search `"San Luis"`, `"Buenos Aires"`, `"Tokyo"`, `"Japan"` offline).
 17. **🎬 Full-Featured Lightbox & Slideshow:** Mouse-wheel zoom (`0.5x`–`5x`), click-and-drag panning, auto-advancing slideshow (`S`), in-viewer star ratings (`1`–`5`) and favorites (`F`), plus RAW photo preview & FFmpeg-free video thumbnails.
 18. **🗑️ Safe OS Recycle Bin / Trash Integration & Auto-Clean:** Move deleted files or bulk duplicate clusters safely to the OS Recycle Bin / Trash instead of permanent destruction.
+19. **🔐 Signed In-App Auto-Updater:** Cryptographically verified Minisign auto-updates (`tauri-plugin-updater`) via GitHub Releases (`latest.json`) with startup checks, release notes preview, live progress bar, graceful SQLite WAL checkpointing, and one-click restart.
 
 ---
 
 ## 💾 Download & Installation
 
-Pre-compiled production binaries for Windows (x64) are available on the [**GitHub Releases Page (v0.4.1)**](https://github.com/puntano/puntano-media-library/releases/tag/v0.4.1):
+Pre-compiled production binaries for Windows (x64) and macOS are available on the [**GitHub Releases Page (v0.4.2)**](https://github.com/puntano/puntano-media-library/releases/tag/v0.4.2):
 
 | Package Type | File | Description |
 | :--- | :--- | :--- |
-| **Setup Wizard (Recommended)** | [`Puntano.Media.Library_0.4.1_x64-setup.exe`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.1/Puntano.Media.Library_0.4.1_x64-setup.exe) | Windows NSIS installer with desktop shortcut, Start menu entry, and seamless in-place updates (~3.6 MB). |
-| **Enterprise Installer** | [`Puntano.Media.Library_0.4.1_x64_en-US.msi`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.1/Puntano.Media.Library_0.4.1_x64_en-US.msi) | Windows Installer MSI package suitable for unattended or enterprise deployments (~4.9 MB). |
+| **Setup Wizard (Recommended)** | [`Puntano.Media.Library_0.4.2_x64-setup.exe`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.2/Puntano.Media.Library_0.4.2_x64-setup.exe) | Windows NSIS installer with desktop shortcut, Start menu entry, and signed in-app auto-updates (~4.2 MB). |
+| **Enterprise Installer** | [`Puntano.Media.Library_0.4.2_x64_en-US.msi`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.2/Puntano.Media.Library_0.4.2_x64_en-US.msi) | Windows Installer MSI package suitable for unattended or enterprise deployments (~5.9 MB). |
+| **macOS Apple Silicon** | [`Puntano.Media.Library_0.4.2_aarch64.dmg`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.2/Puntano.Media.Library_0.4.2_aarch64.dmg) | macOS Apple Silicon (`.dmg`) installer with signed in-app auto-updates (~8.5 MB). |
 | **Portable Executable** | `puntano-media-library.exe` | Standalone binary with embedded UI assets. Requires no installation—run directly from any folder or USB drive. |
 
 ### How to Install & Update on Windows
-1. Download the setup file ([`.exe`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.1/Puntano.Media.Library_0.4.1_x64-setup.exe) or [`.msi`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.1/Puntano.Media.Library_0.4.1_x64_en-US.msi)).
+1. Download the setup file ([`.exe`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.2/Puntano.Media.Library_0.4.2_x64-setup.exe) or [`.msi`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.2/Puntano.Media.Library_0.4.2_x64_en-US.msi)).
 2. Double-click the installer and follow the prompt instructions.
-3. **In-Place Updates**: If a previous version of Puntano Media Library is already installed, running the setup `.exe` updates the app automatically in-place without requiring you to uninstall first.
+3. **Automatic In-App Updates**: Starting in `v0.4.2`, Puntano Media Library checks for signed updates automatically on launch and lets you install new releases and restart with one click.
 4. **Note on Windows SmartScreen:** Because this build is self-signed, Windows SmartScreen may show a *"Windows protected your PC"* prompt on first launch. Click **"More info"** and then **"Run anyway"**.
 
 ### How to Share with Others
-- **Option A (GitHub Releases):** Share the direct release page: [https://github.com/puntano/puntano-media-library/releases/tag/v0.4.1](https://github.com/puntano/puntano-media-library/releases/tag/v0.4.1).
-- **Option B (Direct Sharing):** Send the `Puntano.Media.Library_0.4.1_x64-setup.exe` file directly via Google Drive, OneDrive, or USB stick. Recipients do not need Node.js, Rust, or C++ installed.
+- **Option A (GitHub Releases):** Share the direct release page: [https://github.com/puntano/puntano-media-library/releases/tag/v0.4.2](https://github.com/puntano/puntano-media-library/releases/tag/v0.4.2).
+- **Option B (Direct Sharing):** Send the `Puntano.Media.Library_0.4.2_x64-setup.exe` file directly via Google Drive, OneDrive, or USB stick. Recipients do not need Node.js, Rust, or C++ installed.
 
 ---
 
@@ -80,8 +82,9 @@ Pre-compiled production binaries for Windows (x64) are available on the [**GitHu
 puntano-media-library/
 ├── .github/
 │   └── workflows/
-│       ├── build-windows.yml       # Windows x64 & ARM64 MSI / NSIS installer
-│       └── build-macos.yml         # macOS Universal binary (.dmg / .app)
+│       ├── build-windows.yml       # Windows CI verification on main & PRs
+│       ├── build-macos.yml         # macOS CI verification on main & PRs
+│       └── release.yml             # Signed cross-platform release & latest.json publisher (on v* tags)
 ├── docs/
 │   ├── architecture.md             # System architecture & thread pipeline
 │   ├── database-schema.sql         # Production DDL schema with R*Tree & triggers
@@ -232,6 +235,17 @@ The build command outputs:
 - **Windows MSI Installer:** `src-tauri/target/release/bundle/msi/Puntano Media Library_0.1.0_x64_en-US.msi`
 - **Standalone Binary:** `src-tauri/target/release/puntano-media-library.exe`
 - **macOS (when built on Mac):** `.dmg` disk image and `.app` bundle in `src-tauri/target/release/bundle/dmg/`
+
+### 5. Publishing Signed Auto-Updater Releases
+Releases are built, signed, and published automatically by [`.github/workflows/release.yml`](.github/workflows/release.yml) whenever a `v*` git tag is pushed:
+1. Ensure `TAURI_SIGNING_PRIVATE_KEY` is configured under **Settings → Secrets and variables → Actions** in GitHub.
+2. Bump the version in `package.json`, `src-tauri/Cargo.toml`, and `src-tauri/tauri.conf.json`.
+3. Commit, tag, and push:
+   ```bash
+   git tag -a v0.4.2 -m "Release v0.4.2"
+   git push origin main v0.4.2
+   ```
+4. GitHub Actions compiles Windows (`x86_64`) and macOS (`aarch64` & `x86_64`) bundles, signs updater artifacts, assembles a unified cross-platform `latest.json` manifest, and publishes the GitHub Release atomically.
 
 ---
 

@@ -64,6 +64,7 @@ pub fn run() {
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
+        .plugin(tauri_plugin_process::init())
         .register_uri_scheme_protocol("puntano-thumb", move |ctx, request| {
             // Stream thumbnail directly from disk cache to WebViews with zero IPC serialization
             let raw_path = request.uri().path();
@@ -128,6 +129,10 @@ pub fn run() {
                 .unwrap()
         })
         .setup(move |app| {
+            #[cfg(desktop)]
+            app.handle()
+                .plugin(tauri_plugin_updater::Builder::new().build())?;
+
             // Locate or create application data & cache directories
             let app_data_dir = app
                 .path()
@@ -256,6 +261,8 @@ pub fn run() {
             commands::diagnostics::export_logs,
             commands::diagnostics::get_diagnostic_report,
             commands::diagnostics::log_frontend_event,
+            commands::diagnostics::prepare_for_update_restart,
+            commands::diagnostics::open_release_page,
             commands::media::query_spatial_bounding_box,
             commands::media::query_timeline_groups,
             commands::media::query_media_paged,
