@@ -93,15 +93,18 @@ jobs:
         with:
           ref: ${{ needs.prepare-release.outputs.tag }}
 
-      - name: Verify Tauri Updater Signing Key Secret
+      - name: Verify & Sanitize Tauri Updater Signing Key
         shell: bash
         env:
-          SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          RAW_SIGNING_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
         run: |
-          if [ -z "$SIGNING_KEY" ]; then
+          CLEAN_KEY="$(printf '%s' "$RAW_SIGNING_KEY" | tr -d '[:space:]')"
+          if [ -z "$CLEAN_KEY" ]; then
             echo "::error::Missing TAURI_SIGNING_PRIVATE_KEY secret in GitHub Repository Settings -> Secrets and variables -> Actions."
             exit 1
           fi
+          echo "::add-mask::$CLEAN_KEY"
+          echo "CLEAN_TAURI_SIGNING_KEY=$CLEAN_KEY" >> "$GITHUB_ENV"
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -130,7 +133,7 @@ jobs:
         uses: tauri-apps/tauri-action@v0
         env:
           GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ env.CLEAN_TAURI_SIGNING_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
           releaseId: ${{ needs.prepare-release.outputs.release_id }}
@@ -172,19 +175,31 @@ jobs:
             const version = process.env.RELEASE_VERSION;
             const { owner, repo } = context.repo;
 
-            // Collect local backup .sig files if needed
+            // Collect local backup .sig files grouped by matrix target folder
             const localSigs = new Map();
-            function walkSigs(dir) {
+            const targetSigs = {
+              'windows-x86_64': [],
+              'darwin-aarch64': [],
+              'darwin-x86_64': [],
+            };
+            function walkSigs(dir, targetKey = null) {
               if (!fs.existsSync(dir)) return;
               for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
                 const full = path.join(dir, entry.name);
                 if (entry.isDirectory()) {
-                  walkSigs(full);
+                  let nextTarget = targetKey;
+                  if (entry.name === 'sigs-windows-x86_64') nextTarget = 'windows-x86_64';
+                  if (entry.name === 'sigs-darwin-aarch64') nextTarget = 'darwin-aarch64';
+                  if (entry.name === 'sigs-darwin-x86_64') nextTarget = 'darwin-x86_64';
+                  walkSigs(full, nextTarget);
                 } else if (entry.name.endsWith('.sig')) {
                   const normalized = entry.name.replace(/ /g, '.');
                   const content = fs.readFileSync(full, 'utf8').trim();
                   localSigs.set(entry.name, content);
                   localSigs.set(normalized, content);
+                  if (targetKey && targetSigs[targetKey]) {
+                    targetSigs[targetKey].push({ name: entry.name, content });
+                  }
                 }
               }
             }
@@ -203,7 +218,7 @@ jobs:
               per_page: 100,
             });
 
-            async function getSignatureForAsset(assetName) {
+            async function getSignatureForAsset(assetName, targetKey, suffixFilter) {
               const sigAssetName = `${assetName}.sig`;
               const sigAsset = assets.find((a) => a.name === sigAssetName);
               if (sigAsset) {
@@ -217,7 +232,14 @@ jobs:
                   ? res.data.trim()
                   : Buffer.from(res.data).toString('utf8').trim();
               }
-              return localSigs.get(sigAssetName) || null;
+              if (localSigs.has(sigAssetName)) {
+                return localSigs.get(sigAssetName);
+              }
+              const candidates = targetSigs[targetKey] || [];
+              const matched = suffixFilter
+                ? candidates.find((c) => c.name.endsWith(suffixFilter))
+                : candidates[0];
+              return matched ? matched.content : null;
             }
 
             function publicDownloadUrl(assetName) {
@@ -235,7 +257,8 @@ jobs:
             );
             const winAsset = winNsis || winMsi;
             if (winAsset) {
-              const sig = await getSignatureForAsset(winAsset.name);
+              const sigSuffix = winNsis ? '-setup.exe.sig' : '.msi.sig';
+              const sig = await getSignatureForAsset(winAsset.name, 'windows-x86_64', sigSuffix);
               if (sig) {
                 const entry = {
                   signature: sig,
@@ -251,7 +274,7 @@ jobs:
               (a) => a.name.endsWith('_aarch64.app.tar.gz')
             );
             if (macArm) {
-              const sig = await getSignatureForAsset(macArm.name);
+              const sig = await getSignatureForAsset(macArm.name, 'darwin-aarch64', '.app.tar.gz.sig');
               if (sig) {
                 const entry = {
                   signature: sig,
@@ -270,7 +293,7 @@ jobs:
                 !a.name.endsWith('_aarch64.app.tar.gz')
             );
             if (macIntel) {
-              const sig = await getSignatureForAsset(macIntel.name);
+              const sig = await getSignatureForAsset(macIntel.name, 'darwin-x86_64', '.app.tar.gz.sig');
               if (sig) {
                 const entry = {
                   signature: sig,
