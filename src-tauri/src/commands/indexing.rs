@@ -9,8 +9,23 @@ use crate::models::IndexingProgressEvent;
 
 pub struct AppState {
     pub db_path: PathBuf,
-    pub cancel_token: Arc<AtomicBool>,
+    /// Signals background daemons (ThumbnailWorker, LibraryWatcher) to exit on app shutdown.
+    pub shutdown_token: Arc<AtomicBool>,
+    /// Signals only the currently running IndexingPipeline scan to abort.
+    pub indexing_cancel_token: Arc<AtomicBool>,
+    /// Prevents concurrent full-directory indexing pipelines from racing.
+    pub is_indexing_active: Arc<AtomicBool>,
+    /// Tracks file hashes whose thumbnail generation failed in the current session.
+    pub failed_hashes: Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
     pub watcher_tx: std::sync::Mutex<std::sync::mpsc::Sender<crate::indexer::WatcherCommand>>,
+}
+
+struct IndexingActiveGuard(Arc<AtomicBool>);
+
+impl Drop for IndexingActiveGuard {
+    fn drop(&mut self) {
+        self.0.store(false, Ordering::SeqCst);
+    }
 }
 
 #[tauri::command]
@@ -29,17 +44,29 @@ pub async fn start_indexing(
         })?;
     let canonical_path_str = validated_dir.to_string_lossy().to_string();
 
-    // Register folder with live filesystem watcher immediately
-    if let Ok(tx) = state.watcher_tx.lock() {
-        let _ = tx.send(crate::indexer::WatcherCommand::Watch(validated_dir));
+    if state
+        .is_indexing_active
+        .compare_exchange(false, true, Ordering::SeqCst, Ordering::SeqCst)
+        .is_err()
+    {
+        let msg = "An indexing scan is already in progress. Please wait for it to finish or cancel it first.".to_string();
+        log::warn!("{}", msg);
+        return Err(msg);
     }
+    let active_guard = IndexingActiveGuard(state.is_indexing_active.clone());
 
-    state.cancel_token.store(false, Ordering::Relaxed);
-    let cancel = state.cancel_token.clone();
+    state.indexing_cancel_token.store(false, Ordering::SeqCst);
+    if let Ok(mut failed) = state.failed_hashes.write() {
+        failed.clear();
+    }
+    let cancel = state.indexing_cancel_token.clone();
     let db_path = state.db_path.clone();
+    let watcher_dir = validated_dir.clone();
 
     // Spawn background task to avoid blocking the Tauri main IPC thread
-    tokio::task::spawn_blocking(move || {
+    let result = tokio::task::spawn_blocking(move || {
+        let _guard = active_guard;
+
         let mut conn = DatabaseManager::open(&db_path)
             .map_err(|e| {
                 let err_msg = format!("Failed to open SQLite database: {}", e);
@@ -47,31 +74,56 @@ pub async fn start_indexing(
                 err_msg
             })?;
 
-        // Ensure library row exists
-        conn.execute(
-            "INSERT OR IGNORE INTO libraries (path, created_at) VALUES (?1, ?2);",
-            rusqlite::params![canonical_path_str, chrono::Utc::now().timestamp_millis()],
-        ).map_err(|e| {
-            let err_msg = format!("Failed to insert library record: {}", e);
-            log::error!("{}", err_msg);
-            err_msg
-        })?;
+        // Match existing library case-insensitively on Windows to avoid duplicate library entries
+        #[cfg(target_os = "windows")]
+        let existing_lib: Option<(i64, String)> = conn
+            .query_row(
+                "SELECT id, path FROM libraries WHERE LOWER(path) = LOWER(?1) LIMIT 1;",
+                rusqlite::params![canonical_path_str],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
 
-        let library_id: i64 = conn.query_row(
-            "SELECT id FROM libraries WHERE path = ?1;",
-            rusqlite::params![canonical_path_str],
-            |row| row.get(0),
-        ).map_err(|e| {
-            let err_msg = format!("Failed to retrieve library id for '{}': {}", canonical_path_str, e);
-            log::error!("{}", err_msg);
-            err_msg
-        })?;
+        #[cfg(not(target_os = "windows"))]
+        let existing_lib: Option<(i64, String)> = conn
+            .query_row(
+                "SELECT id, path FROM libraries WHERE path = ?1 LIMIT 1;",
+                rusqlite::params![canonical_path_str],
+                |row| Ok((row.get(0)?, row.get(1)?)),
+            )
+            .ok();
 
-        let pipeline = IndexingPipeline::new(500);
+        let library_id: i64 = if let Some((id, existing_path)) = existing_lib {
+            if existing_path != canonical_path_str {
+                let _ = conn.execute(
+                    "UPDATE libraries SET path = ?1, is_active = 1 WHERE id = ?2;",
+                    rusqlite::params![canonical_path_str, id],
+                );
+            } else {
+                let _ = conn.execute(
+                    "UPDATE libraries SET is_active = 1 WHERE id = ?1;",
+                    rusqlite::params![id],
+                );
+            }
+            id
+        } else {
+            conn.execute(
+                "INSERT INTO libraries (path, created_at) VALUES (?1, ?2);",
+                rusqlite::params![canonical_path_str, chrono::Utc::now().timestamp_millis()],
+            )
+            .map_err(|e| {
+                let err_msg = format!("Failed to insert library record: {}", e);
+                log::error!("{}", err_msg);
+                err_msg
+            })?;
+            conn.last_insert_rowid()
+        };
+
+        let pipeline = IndexingPipeline::default();
 
         let app_handle = app.clone();
         let target_dir = canonical_path_str.clone();
-        let count = pipeline.run(
+        let run_res = pipeline.run(
             library_id,
             &target_dir,
             &mut conn,
@@ -79,18 +131,28 @@ pub async fn start_indexing(
             move |progress: IndexingProgressEvent| {
                 let _ = app_handle.emit("indexing-progress", progress);
             },
-        ).map_err(|e| {
+        );
+
+        // Refresh library statistics across all libraries (handles overlapping/reconciled folders)
+        let _ = conn.execute(
+            "UPDATE libraries SET last_scanned_at = ?1 WHERE id = ?2;",
+            rusqlite::params![chrono::Utc::now().timestamp_millis(), library_id],
+        );
+        let _ = conn.execute(
+            "UPDATE libraries SET total_files = (SELECT count(*) FROM media_files WHERE library_id = libraries.id);",
+            [],
+        );
+
+        let count = run_res.map_err(|e| {
             log::error!("Pipeline run failed for '{}': {}", target_dir, e);
             e
         })?;
 
-        // Update library statistics
-        let _ = conn.execute(
-            "UPDATE libraries SET last_scanned_at = ?1, total_files = (SELECT count(*) FROM media_files WHERE library_id = ?2) WHERE id = ?2;",
-            rusqlite::params![chrono::Utc::now().timestamp_millis(), library_id],
+        log::info!(
+            "Successfully finished indexing '{}'. Total indexed in run: {}",
+            canonical_path_str,
+            count
         );
-
-        log::info!("Successfully finished indexing '{}'. Total indexed: {}", canonical_path_str, count);
         Ok(count)
     })
     .await
@@ -98,12 +160,22 @@ pub async fn start_indexing(
         let join_err = format!("Task join error: {}", e);
         log::error!("{}", join_err);
         join_err
-    })?
+    })?;
+
+    // Register folder with live filesystem watcher after initial scan finishes
+    if result.is_ok() {
+        if let Ok(tx) = state.watcher_tx.lock() {
+            let _ = tx.send(crate::indexer::WatcherCommand::Watch(watcher_dir));
+        }
+    }
+
+    result
 }
 
 #[tauri::command]
 pub fn cancel_indexing(state: State<'_, AppState>) -> Result<(), String> {
-    state.cancel_token.store(true, Ordering::Relaxed);
+    log::info!("Cancelling active indexing scan at user request.");
+    state.indexing_cancel_token.store(true, Ordering::SeqCst);
     Ok(())
 }
 
@@ -155,6 +227,7 @@ pub fn remove_library(state: State<'_, AppState>, library_id: i64) -> Result<(),
         .ok();
     conn.execute("DELETE FROM libraries WHERE id = ?1;", rusqlite::params![library_id])
         .map_err(|e| format!("Failed to remove library: {}", e))?;
+    log::info!("Unlinked library id={} path={:?}", library_id, path_opt);
     if let Some(p) = path_opt {
         if let Ok(tx) = state.watcher_tx.lock() {
             let _ = tx.send(crate::indexer::WatcherCommand::Unwatch(PathBuf::from(p)));
@@ -173,7 +246,7 @@ pub async fn prune_missing_files(state: State<'_, AppState>) -> Result<u64, Stri
         let mut missing_ids = Vec::new();
         {
             let mut stmt = conn
-                .prepare("SELECT id, file_path FROM media_files;")
+                .prepare("SELECT id, file_path FROM media_files ORDER BY id DESC;")
                 .map_err(|e| e.to_string())?;
 
             let rows = stmt
@@ -182,8 +255,29 @@ pub async fn prune_missing_files(state: State<'_, AppState>) -> Result<u64, Stri
                 })
                 .map_err(|e| e.to_string())?;
 
+            let mut seen_normalized = std::collections::HashSet::new();
+
             for r in rows.flatten() {
-                if !std::path::Path::new(&r.1).exists() {
+                let path = std::path::Path::new(&r.1);
+                let is_invalid = match std::fs::metadata(path) {
+                    Ok(meta) => !meta.is_file() || meta.len() == 0,
+                    Err(_) => true,
+                };
+                if is_invalid || crate::indexer::walker::DirectoryWalker::should_ignore_path(path) {
+                    missing_ids.push(r.0);
+                    continue;
+                }
+
+                #[cfg(target_os = "windows")]
+                let norm_key = crate::indexer::walker::DirectoryWalker::normalize_existing_path(path)
+                    .to_string_lossy()
+                    .to_lowercase();
+                #[cfg(not(target_os = "windows"))]
+                let norm_key = crate::indexer::walker::DirectoryWalker::normalize_existing_path(path)
+                    .to_string_lossy()
+                    .to_string();
+
+                if !seen_normalized.insert(norm_key) {
                     missing_ids.push(r.0);
                 }
             }
@@ -191,18 +285,16 @@ pub async fn prune_missing_files(state: State<'_, AppState>) -> Result<u64, Stri
 
         let total_pruned = missing_ids.len() as u64;
         if total_pruned > 0 {
-            let tx = conn.transaction().map_err(|e| e.to_string())?;
-            {
-                let mut del_stmt = tx
-                    .prepare_cached("DELETE FROM media_files WHERE id = ?1;")
-                    .map_err(|e| e.to_string())?;
-                for id in missing_ids {
-                    let _ = del_stmt.execute(rusqlite::params![id]);
-                }
-            }
-            tx.commit().map_err(|e| e.to_string())?;
+            MediaRepository::delete_stale_ids(&mut conn, &missing_ids)
+                .map_err(|e| e.to_string())?;
         }
 
+        let _ = conn.execute(
+            "UPDATE libraries SET total_files = (SELECT count(*) FROM media_files WHERE library_id = libraries.id);",
+            [],
+        );
+
+        log::info!("Pruned {} missing, empty, ignored, or duplicate-path files from database.", total_pruned);
         Ok(total_pruned)
     })
     .await

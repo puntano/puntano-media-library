@@ -144,6 +144,10 @@ CREATE INDEX IF NOT EXISTS idx_media_thumb_status
 ON media_files(thumbnail_status) 
 WHERE thumbnail_status = 'pending';
 
+CREATE INDEX IF NOT EXISTS idx_media_thumb_pending_order
+ON media_files(COALESCE(captured_at, file_modified_at) DESC, id DESC)
+WHERE thumbnail_status = 'pending';
+
 CREATE INDEX IF NOT EXISTS idx_media_geohash 
 ON media_files(geohash) 
 WHERE geohash IS NOT NULL;

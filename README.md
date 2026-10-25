@@ -37,23 +37,23 @@
 
 ## 💾 Download & Installation
 
-Pre-compiled production binaries for Windows (x64) are available on the [**GitHub Releases Page (v0.4.0)**](https://github.com/puntano/puntano-media-library/releases/tag/v0.4.0):
+Pre-compiled production binaries for Windows (x64) are available on the [**GitHub Releases Page (v0.4.1)**](https://github.com/puntano/puntano-media-library/releases/tag/v0.4.1):
 
 | Package Type | File | Description |
 | :--- | :--- | :--- |
-| **Setup Wizard (Recommended)** | [`Puntano.Media.Library_0.4.0_x64-setup.exe`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.0/Puntano.Media.Library_0.4.0_x64-setup.exe) | Windows NSIS installer with desktop shortcut, Start menu entry, and seamless in-place updates (~3.6 MB). |
-| **Enterprise Installer** | [`Puntano.Media.Library_0.4.0_x64_en-US.msi`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.0/Puntano.Media.Library_0.4.0_x64_en-US.msi) | Windows Installer MSI package suitable for unattended or enterprise deployments (~4.9 MB). |
+| **Setup Wizard (Recommended)** | [`Puntano.Media.Library_0.4.1_x64-setup.exe`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.1/Puntano.Media.Library_0.4.1_x64-setup.exe) | Windows NSIS installer with desktop shortcut, Start menu entry, and seamless in-place updates (~3.6 MB). |
+| **Enterprise Installer** | [`Puntano.Media.Library_0.4.1_x64_en-US.msi`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.1/Puntano.Media.Library_0.4.1_x64_en-US.msi) | Windows Installer MSI package suitable for unattended or enterprise deployments (~4.9 MB). |
 | **Portable Executable** | `puntano-media-library.exe` | Standalone binary with embedded UI assets. Requires no installation—run directly from any folder or USB drive. |
 
 ### How to Install & Update on Windows
-1. Download the setup file ([`.exe`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.0/Puntano.Media.Library_0.4.0_x64-setup.exe) or [`.msi`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.0/Puntano.Media.Library_0.4.0_x64_en-US.msi)).
+1. Download the setup file ([`.exe`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.1/Puntano.Media.Library_0.4.1_x64-setup.exe) or [`.msi`](https://github.com/puntano/puntano-media-library/releases/download/v0.4.1/Puntano.Media.Library_0.4.1_x64_en-US.msi)).
 2. Double-click the installer and follow the prompt instructions.
 3. **In-Place Updates**: If a previous version of Puntano Media Library is already installed, running the setup `.exe` updates the app automatically in-place without requiring you to uninstall first.
 4. **Note on Windows SmartScreen:** Because this build is self-signed, Windows SmartScreen may show a *"Windows protected your PC"* prompt on first launch. Click **"More info"** and then **"Run anyway"**.
 
 ### How to Share with Others
-- **Option A (GitHub Releases):** Share the direct release page: [https://github.com/puntano/puntano-media-library/releases/tag/v0.4.0](https://github.com/puntano/puntano-media-library/releases/tag/v0.4.0).
-- **Option B (Direct Sharing):** Send the `Puntano.Media.Library_0.4.0_x64-setup.exe` file directly via Google Drive, OneDrive, or USB stick. Recipients do not need Node.js, Rust, or C++ installed.
+- **Option A (GitHub Releases):** Share the direct release page: [https://github.com/puntano/puntano-media-library/releases/tag/v0.4.1](https://github.com/puntano/puntano-media-library/releases/tag/v0.4.1).
+- **Option B (Direct Sharing):** Send the `Puntano.Media.Library_0.4.1_x64-setup.exe` file directly via Google Drive, OneDrive, or USB stick. Recipients do not need Node.js, Rust, or C++ installed.
 
 ---
 

@@ -152,11 +152,25 @@ export interface DiagnosticReport {
   os_name: string;
   os_family: string;
   arch: string;
+  cpu_threads: number;
+  ffmpeg_available: boolean;
   db_path: string;
   db_size_bytes: number;
+  db_free_space_bytes?: number | null;
+  cache_dir_path: string;
   log_file_path: string;
   total_libraries: number;
+  registered_libraries: string[];
   total_media_files: number;
+  photos_count: number;
+  raw_count: number;
+  videos_count: number;
+  duplicate_extra_files: number;
+  thumbnails_ready: number;
+  thumbnails_pending: number;
+  thumbnails_failed: number;
+  top_extensions: string[];
+  critical_alerts: string[];
   recent_logs: string[];
 }
 

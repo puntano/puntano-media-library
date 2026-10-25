@@ -6,9 +6,10 @@ pub mod metadata;
 pub mod models;
 pub mod thumbnails;
 
+use std::collections::HashSet;
 use std::fs;
 use std::sync::atomic::AtomicBool;
-use std::sync::Arc;
+use std::sync::{Arc, RwLock};
 use tauri::http::{header, Response};
 use tauri::Manager;
 
@@ -18,8 +19,12 @@ use thumbnails::{ThumbnailCache, ThumbnailWorker};
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    // Global panic hook: logs any panic to file even if the thread unwinds
+    // Global panic hook: logs thread name, source location, payload, and compact backtrace to file
     std::panic::set_hook(Box::new(|info| {
+        let thread_name = std::thread::current()
+            .name()
+            .unwrap_or("unnamed")
+            .to_string();
         let loc = info
             .location()
             .map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column()))
@@ -31,13 +36,30 @@ pub fn run() {
         } else {
             "Unknown panic payload".to_string()
         };
-        let panic_msg = format!("FATAL UNCAUGHT PANIC at {}: {}", loc, payload);
+        let bt = std::backtrace::Backtrace::force_capture().to_string();
+        let compact_bt: String = bt
+            .lines()
+            .filter(|l| !l.trim().is_empty())
+            .take(16)
+            .collect::<Vec<_>>()
+            .join(" | ");
+        let panic_msg = format!(
+            "FATAL UNCAUGHT PANIC on thread '{}' at {}: {} [Backtrace: {}]",
+            thread_name,
+            loc,
+            payload,
+            compact_bt.chars().take(1600).collect::<String>()
+        );
         eprintln!("{}", panic_msg);
         crate::logger::log_panic(&panic_msg);
     }));
 
-    let cancel_token = Arc::new(AtomicBool::new(false));
-    let cancel_worker = cancel_token.clone();
+    let shutdown_token = Arc::new(AtomicBool::new(false));
+    let shutdown_worker = shutdown_token.clone();
+    let indexing_cancel_token = Arc::new(AtomicBool::new(false));
+    let is_indexing_active = Arc::new(AtomicBool::new(false));
+    let failed_hashes: Arc<RwLock<HashSet<String>>> = Arc::new(RwLock::new(HashSet::new()));
+    let failed_hashes_proto = failed_hashes.clone();
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -48,6 +70,9 @@ pub fn run() {
             let clean = raw_path.trim_start_matches('/');
             let file_part = clean.strip_prefix("localhost/").unwrap_or(clean);
             let file_hash = file_part
+                .split('?')
+                .next()
+                .unwrap_or(file_part)
                 .trim_end_matches(".jpg")
                 .trim_end_matches(".webp");
 
@@ -60,19 +85,36 @@ pub fn run() {
             let cache = ThumbnailCache::new(&cache_dir);
             let target_file = cache.resolve_path(file_hash);
 
-            if target_file.exists() {
+            if ThumbnailCache::is_valid_cached_file(&target_file) {
                 if let Ok(bytes) = fs::read(&target_file) {
-                    let content_type = if target_file.extension().and_then(|s| s.to_str()) == Some("jpg") {
-                        "image/jpeg"
-                    } else {
-                        "image/webp"
-                    };
-                    return Response::builder()
-                        .header(header::CONTENT_TYPE, content_type)
-                        .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
-                        .body(bytes)
-                        .unwrap();
+                    if !bytes.is_empty() {
+                        let content_type = if target_file.extension().and_then(|s| s.to_str()) == Some("jpg") {
+                            "image/jpeg"
+                        } else {
+                            "image/webp"
+                        };
+                        return Response::builder()
+                            .header(header::CONTENT_TYPE, content_type)
+                            .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+                            .body(bytes)
+                            .unwrap();
+                    }
                 }
+            }
+
+            // If thumbnail generation failed for this hash in the current session, return 404
+            // so the frontend immediately falls back instead of showing "PROCESSING..." indefinitely.
+            if failed_hashes_proto
+                .read()
+                .map(|set| set.contains(file_hash))
+                .unwrap_or(false)
+            {
+                return Response::builder()
+                    .status(404)
+                    .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                    .header(header::CACHE_CONTROL, "no-store, no-cache")
+                    .body(b"Thumbnail generation failed".to_vec())
+                    .unwrap();
             }
 
             // High-speed non-blocking SVG placeholder while generation is processed by daemon.
@@ -81,7 +123,7 @@ pub fn run() {
             Response::builder()
                 .status(200)
                 .header(header::CONTENT_TYPE, "image/svg+xml")
-                .header(header::CACHE_CONTROL, "no-cache")
+                .header(header::CACHE_CONTROL, "no-store, no-cache")
                 .body(fallback_svg.as_bytes().to_vec())
                 .unwrap()
         })
@@ -108,11 +150,44 @@ pub fn run() {
             let log_dir = app_data_dir.join("logs");
             let _ = crate::logger::init(&log_dir);
 
+            // Log host environment capabilities & free disk space at startup
+            let cpu_threads = rayon::current_num_threads();
+            let ffmpeg_path = thumbnails::VideoKeyframeExtractor::find_ffmpeg_binary();
+            let data_free_mb = commands::diagnostics::get_available_disk_bytes(&app_data_dir)
+                .map(|b| b / (1024 * 1024));
+            let cache_free_mb = commands::diagnostics::get_available_disk_bytes(&app_cache_dir)
+                .map(|b| b / (1024 * 1024));
+            log::info!(
+                "[Puntano Engine] Host capabilities: rayon_threads={}, ffmpeg={:?}, data_dir_free_mb={:?}, cache_dir_free_mb={:?}",
+                cpu_threads,
+                ffmpeg_path,
+                data_free_mb,
+                cache_free_mb
+            );
+            if let Some(free_mb) = data_free_mb.into_iter().chain(cache_free_mb).min() {
+                if free_mb < 500 {
+                    log::warn!(
+                        "[Puntano Engine] Low disk space detected ({} MB free) on app data/cache drive; SQLite commits or thumbnail caching may fail.",
+                        free_mb
+                    );
+                }
+            }
+
             let db_path = app_data_dir.join("puntano.db");
 
             // Initialize database schema and verify R*Tree virtual table support (runs migrations ONCE at startup)
-            let conn = DatabaseManager::open_and_migrate(&db_path)
-                .expect("Failed to initialize SQLite database");
+            let conn = match DatabaseManager::open_and_migrate(&db_path) {
+                Ok(c) => c,
+                Err(e) => {
+                    log::error!(
+                        "[Puntano Engine] CRITICAL: Failed to open or migrate SQLite database at '{}': {}",
+                        db_path.display(),
+                        e
+                    );
+                    crate::logger::flush();
+                    panic!("Failed to initialize SQLite database: {}", e);
+                }
+            };
             
             let rtree_ok = DatabaseManager::verify_rtree_support(&conn)
                 .unwrap_or(false);
@@ -123,12 +198,19 @@ pub fn run() {
                 log::warn!("[Puntano Engine] WARNING: SQLite R*Tree module was not detected!");
             }
 
+            // Ensure per-library file counts are synchronized with actual media_files records
+            let _ = conn.execute(
+                "UPDATE libraries SET total_files = (SELECT count(*) FROM media_files WHERE library_id = libraries.id);",
+                [],
+            );
+
             // Spawn background decoupled thumbnail generation daemon
             ThumbnailWorker::start_daemon(
                 app.handle().clone(),
                 db_path.clone(),
                 app_cache_dir,
-                cancel_worker,
+                shutdown_worker,
+                failed_hashes.clone(),
             );
 
             // Spawn background live filesystem watcher for registered library folders
@@ -146,12 +228,15 @@ pub fn run() {
                 app.handle().clone(),
                 db_path.clone(),
                 watched_libraries,
-                cancel_token.clone(),
+                shutdown_token.clone(),
             );
 
             app.manage(AppState {
                 db_path,
-                cancel_token,
+                shutdown_token,
+                indexing_cancel_token,
+                is_indexing_active,
+                failed_hashes,
                 watcher_tx: std::sync::Mutex::new(watcher_tx),
             });
 
@@ -170,6 +255,7 @@ pub fn run() {
             commands::diagnostics::open_log_folder,
             commands::diagnostics::export_logs,
             commands::diagnostics::get_diagnostic_report,
+            commands::diagnostics::log_frontend_event,
             commands::media::query_spatial_bounding_box,
             commands::media::query_timeline_groups,
             commands::media::query_media_paged,

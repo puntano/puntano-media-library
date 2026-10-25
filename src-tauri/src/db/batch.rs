@@ -79,6 +79,9 @@ impl MediaRepository {
                     ?32, ?33
                 )
                 ON CONFLICT(file_path) DO UPDATE SET
+                    library_id = excluded.library_id,
+                    directory = excluded.directory,
+                    file_name = excluded.file_name,
                     file_size = excluded.file_size,
                     file_modified_at = excluded.file_modified_at,
                     file_hash = excluded.file_hash,
@@ -100,7 +103,7 @@ impl MediaRepository {
                     aperture = excluded.aperture,
                     iso = excluded.iso,
                     exposure_time = excluded.exposure_time,
-                    thumbnail_status = CASE WHEN media_files.file_hash != excluded.file_hash THEN 'pending' ELSE media_files.thumbnail_status END,
+                    thumbnail_status = CASE WHEN media_files.file_hash != excluded.file_hash OR media_files.thumbnail_status = 'failed' THEN 'pending' ELSE media_files.thumbnail_status END,
                     updated_at = excluded.updated_at;
                 "#,
             )?;
@@ -178,6 +181,72 @@ impl MediaRepository {
             map.insert(path, sig);
         }
         Ok(map)
+    }
+
+    /// Loads existing DB records belonging to `library_id` or located physically within `root_dir`
+    /// (case-insensitive on Windows) to reconcile moved/deleted/hidden files and overlapping libraries.
+    pub fn load_records_for_root_scan(
+        conn: &Connection,
+        library_id: i64,
+        root_dir: &str,
+    ) -> Result<Vec<(i64, i64, String, i64, i64, String)>> {
+        let root_trimmed = root_dir.trim_end_matches(['\\', '/']);
+        #[cfg(windows)]
+        let root_cmp = root_trimmed.to_lowercase();
+        #[cfg(not(windows))]
+        let root_cmp = root_trimmed.to_string();
+
+        let is_under_root = |file_path: &str| -> bool {
+            #[cfg(windows)]
+            let p_cmp = file_path.to_lowercase();
+            #[cfg(not(windows))]
+            let p_cmp = file_path.to_string();
+
+            if let Some(rest) = p_cmp.strip_prefix(&root_cmp) {
+                rest.is_empty() || rest.starts_with('\\') || rest.starts_with('/')
+            } else {
+                false
+            }
+        };
+
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, library_id, file_path, file_modified_at, file_size, thumbnail_status FROM media_files;",
+        )?;
+        let rows = stmt.query_map([], |row| {
+            Ok((
+                row.get::<_, i64>(0)?,
+                row.get::<_, i64>(1)?,
+                row.get::<_, String>(2)?,
+                row.get::<_, i64>(3)?,
+                row.get::<_, i64>(4)?,
+                row.get::<_, String>(5)?,
+            ))
+        })?;
+
+        let mut list = Vec::new();
+        for r in rows {
+            let rec = r?;
+            if rec.1 == library_id || is_under_root(&rec.2) {
+                list.push(rec);
+            }
+        }
+        Ok(list)
+    }
+
+    /// Deletes a list of stale/missing media_files primary key IDs in a single transaction.
+    pub fn delete_stale_ids(conn: &mut Connection, ids: &[i64]) -> Result<usize> {
+        if ids.is_empty() {
+            return Ok(0);
+        }
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached("DELETE FROM media_files WHERE id = ?1;")?;
+            for &id in ids {
+                let _ = stmt.execute(params![id]);
+            }
+        }
+        tx.commit()?;
+        Ok(ids.len())
     }
 
     fn row_to_spatial_point(row: &rusqlite::Row) -> Result<SpatialClusterPoint> {

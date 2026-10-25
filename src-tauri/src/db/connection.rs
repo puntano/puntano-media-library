@@ -61,12 +61,14 @@ impl DatabaseManager {
 
     fn migrate_existing_columns(conn: &Connection) -> Result<()> {
         if !Self::table_has_column(conn, "media_files", "is_favorite")? {
+            log::info!("[Database] Migrating legacy media_files schema: adding 'is_favorite' column.");
             conn.execute(
                 "ALTER TABLE media_files ADD COLUMN is_favorite INTEGER NOT NULL DEFAULT 0;",
                 [],
             )?;
         }
         if !Self::table_has_column(conn, "media_files", "rating")? {
+            log::info!("[Database] Migrating legacy media_files schema: adding 'rating' column.");
             conn.execute(
                 "ALTER TABLE media_files ADD COLUMN rating INTEGER NOT NULL DEFAULT 0;",
                 [],

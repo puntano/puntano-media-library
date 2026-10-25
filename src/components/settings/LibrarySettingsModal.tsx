@@ -35,7 +35,7 @@ export const LibrarySettingsModal: React.FC<LibrarySettingsModalProps> = ({
   const [pruningStatus, setPruningStatus] = useState<string | null>(null);
   const [rescanStatus, setRescanStatus] = useState<string | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState<boolean>(false);
-  const { setTotalMediaCount } = useLibraryStore();
+  const { setTotalMediaCount, incrementSyncRevision, isIndexing } = useLibraryStore();
 
   const loadLibraries = async () => {
     setIsLoading(true);
@@ -67,12 +67,14 @@ export const LibrarySettingsModal: React.FC<LibrarySettingsModalProps> = ({
       await loadLibraries();
       const count = await tauriApi.getTotalMediaCount();
       setTotalMediaCount(count);
+      incrementSyncRevision();
     } catch (err) {
       console.error('Failed to unlink library:', err);
     }
   };
 
   const handleRescan = async (lib: LibraryInfo) => {
+    if (isIndexing) return;
     setRescanStatus(`Scanning ${lib.path}...`);
     try {
       await tauriApi.startIndexing(lib.path);
@@ -80,26 +82,29 @@ export const LibrarySettingsModal: React.FC<LibrarySettingsModalProps> = ({
       await loadLibraries();
       const count = await tauriApi.getTotalMediaCount();
       setTotalMediaCount(count);
+      incrementSyncRevision();
       setTimeout(() => setRescanStatus(null), 4000);
-    } catch (err) {
+    } catch (err: any) {
       console.error('Re-scan failed:', err);
-      setRescanStatus(`Error re-scanning ${lib.path}`);
+      const errMsg = typeof err === 'string' ? err : err?.message || `Error re-scanning ${lib.path}`;
+      setRescanStatus(errMsg);
       setTimeout(() => setRescanStatus(null), 4000);
     }
   };
 
   const handlePrune = async () => {
-    setPruningStatus('Scanning for missing files...');
+    setPruningStatus('Scanning for missing, empty, or ignored files...');
     try {
       const pruned = await tauriApi.pruneMissingFiles();
       setPruningStatus(
         pruned > 0
-          ? `Cleaned up ${pruned} missing / moved files from database.`
-          : 'All library files are verified on disk. Zero missing records.'
+          ? `Cleaned up ${pruned} missing, empty, or ignored files from database.`
+          : 'All library files are verified on disk. Zero stale records.'
       );
       await loadLibraries();
       const count = await tauriApi.getTotalMediaCount();
       setTotalMediaCount(count);
+      incrementSyncRevision();
       setTimeout(() => setPruningStatus(null), 5000);
     } catch (err) {
       console.error('Prune failed:', err);

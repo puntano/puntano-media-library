@@ -9,8 +9,14 @@ export const IndexingPanel: React.FC<{ onClose: () => void }> = ({ onClose }) =>
   const [folderPath, setFolderPath] = useState('');
   const [errorMessage, setErrorMessage] = useState<string | null>(null);
   const [showDiagnostics, setShowDiagnostics] = useState(false);
-  const { isIndexing, setIsIndexing, indexingProgress, setIndexingProgress, setTotalMediaCount } =
-    useLibraryStore();
+  const {
+    isIndexing,
+    setIsIndexing,
+    indexingProgress,
+    setIndexingProgress,
+    setTotalMediaCount,
+    incrementSyncRevision,
+  } = useLibraryStore();
 
   const handleBrowseFolder = async () => {
     setErrorMessage(null);
@@ -36,22 +42,25 @@ export const IndexingPanel: React.FC<{ onClose: () => void }> = ({ onClose }) =>
   };
 
   const handleStartIndexing = async () => {
-    if (!folderPath.trim()) return;
+    const targetFolder = folderPath.trim();
+    if (!targetFolder || isIndexing) return;
     setErrorMessage(null);
+    setIndexingProgress({
+      stage: 'discovering',
+      scanned_files: 0,
+      indexed_files: 0,
+      current_directory: targetFolder,
+      is_complete: false,
+      elapsed_ms: 0,
+    });
     setIsIndexing(true);
 
     try {
-      // Listen for throttled progress events from the Rust pipeline
-      const unlisten = await tauriApi.onIndexingProgress((progress) => {
-        setIndexingProgress(progress);
-        if (progress.is_complete) {
-          setIsIndexing(false);
-          tauriApi.getTotalMediaCount().then((count) => setTotalMediaCount(count));
-          unlisten();
-        }
-      });
+      const indexedCount = await tauriApi.startIndexing(targetFolder);
+      const count = await tauriApi.getTotalMediaCount();
+      setTotalMediaCount(count);
+      incrementSyncRevision();
 
-      const indexedCount = await tauriApi.startIndexing(folderPath.trim());
       if (indexedCount === 0) {
         setErrorMessage(
           'Discovery finished, but 0 supported media files were found in this directory. Ensure the path is correct and that the app has permissions to read files inside it.'
@@ -61,13 +70,13 @@ export const IndexingPanel: React.FC<{ onClose: () => void }> = ({ onClose }) =>
       const msg = typeof err === 'string' ? err : err?.message || 'Indexing failed to start or was interrupted.';
       console.error('Indexing failed:', msg);
       setErrorMessage(msg);
+    } finally {
       setIsIndexing(false);
     }
   };
 
   const handleCancel = async () => {
     await tauriApi.cancelIndexing();
-    setIsIndexing(false);
   };
 
   return (
@@ -187,73 +196,80 @@ export const IndexingPanel: React.FC<{ onClose: () => void }> = ({ onClose }) =>
           </div>
 
           {/* Active Progress View */}
-          {isIndexing && indexingProgress && (
-            <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
-              <div
-                style={{
-                  display: 'flex',
-                  justifyContent: 'space-between',
-                  alignItems: 'center',
-                  fontSize: '0.8rem',
-                  color: 'var(--text-secondary)',
-                }}
-              >
-                <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
-                  <Loader2 size={13} className="animate-spin" color="var(--accent-primary)" />
-                  Stage: <strong style={{ textTransform: 'capitalize' }}>{indexingProgress.stage}</strong>
-                </span>
+          {isIndexing && indexingProgress && (() => {
+            const clampedIndexed = Math.min(indexingProgress.indexed_files, indexingProgress.scanned_files);
+            const progressPct =
+              indexingProgress.scanned_files > 0
+                ? Math.min(100, Math.max(0, Math.round((clampedIndexed / indexingProgress.scanned_files) * 100)))
+                : 100;
 
-                {indexingProgress.stage === 'discovering' ? (
-                  <span>
-                    <strong>{indexingProgress.scanned_files.toLocaleString()}</strong> items discovered
-                  </span>
-                ) : (
-                  <span>
-                    {indexingProgress.indexed_files.toLocaleString()} / {indexingProgress.scanned_files.toLocaleString()} files (
-                    {((indexingProgress.indexed_files / Math.max(1, indexingProgress.scanned_files)) * 100).toFixed(0)}%)
-                  </span>
-                )}
-              </div>
-
-              {/* Progress Bar */}
-              <div
-                style={{
-                  width: '100%',
-                  height: 8,
-                  backgroundColor: 'var(--bg-tertiary)',
-                  borderRadius: 4,
-                  overflow: 'hidden',
-                }}
-              >
+            return (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 10 }}>
                 <div
                   style={{
-                    height: '100%',
-                    width:
-                      indexingProgress.stage === 'discovering'
-                        ? '100%'
-                        : `${Math.min(100, (indexingProgress.indexed_files / Math.max(1, indexingProgress.scanned_files)) * 100)}%`,
-                    background:
-                      indexingProgress.stage === 'discovering'
-                        ? 'linear-gradient(90deg, var(--accent-primary), rgba(59, 130, 246, 0.4), var(--accent-primary))'
-                        : 'var(--accent-gradient)',
-                    transition: 'width 0.2s ease',
+                    display: 'flex',
+                    justifyContent: 'space-between',
+                    alignItems: 'center',
+                    fontSize: '0.8rem',
+                    color: 'var(--text-secondary)',
                   }}
-                />
-              </div>
+                >
+                  <span style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+                    <Loader2 size={13} className="animate-spin" color="var(--accent-primary)" />
+                    Stage: <strong style={{ textTransform: 'capitalize' }}>{indexingProgress.stage}</strong>
+                  </span>
 
-              <div
-                style={{
-                  fontSize: '0.75rem',
-                  color: 'var(--text-muted)',
-                  overflow: 'hidden',
-                  textOverflow: 'ellipsis',
-                  whiteSpace: 'nowrap',
-                }}
-              >
-                Scanning: {indexingProgress.current_directory}
+                  {indexingProgress.stage === 'discovering' ? (
+                    <span>
+                      <strong>{indexingProgress.scanned_files.toLocaleString()}</strong> valid media files found
+                    </span>
+                  ) : (
+                    <span>
+                      <strong>{clampedIndexed.toLocaleString()}</strong> / {indexingProgress.scanned_files.toLocaleString()} files ({progressPct}%)
+                    </span>
+                  )}
+                </div>
+
+                {/* Progress Bar */}
+                <div
+                  style={{
+                    width: '100%',
+                    height: 8,
+                    backgroundColor: 'var(--bg-tertiary)',
+                    borderRadius: 4,
+                    overflow: 'hidden',
+                  }}
+                >
+                  {indexingProgress.stage === 'discovering' ? (
+                    <div className="progress-indeterminate" />
+                  ) : (
+                    <div
+                      style={{
+                        height: '100%',
+                        width: `${progressPct}%`,
+                        background: 'var(--accent-gradient)',
+                        transition: 'width 0.2s ease',
+                      }}
+                    />
+                  )}
+                </div>
+
+                <div
+                  style={{
+                    fontSize: '0.75rem',
+                    color: 'var(--text-muted)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                  }}
+                  title={indexingProgress.current_directory}
+                >
+                  {indexingProgress.stage === 'discovering' ? 'Scanning folder: ' : 'Processing: '}
+                  {indexingProgress.current_directory}
+                </div>
               </div>
-            </div>
-          )}
+            );
+          })()}
 
           {/* Footer Controls */}
           <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginTop: 8 }}>
@@ -274,8 +290,8 @@ export const IndexingPanel: React.FC<{ onClose: () => void }> = ({ onClose }) =>
             </button>
 
             <div style={{ display: 'flex', gap: 12 }}>
-              <button className="btn-secondary" onClick={onClose} disabled={isIndexing}>
-                Close
+              <button className="btn-secondary" onClick={onClose}>
+                {isIndexing ? 'Hide' : 'Close'}
               </button>
               {isIndexing ? (
                 <button

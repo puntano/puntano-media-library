@@ -95,34 +95,94 @@ impl VideoMetadataParser {
     /// Fast scan for MP4/MOV ISO 6709 location atom (©xyz / xyz)
     /// Format e.g.: "+34.0522-118.2437+100.000/"
     fn scan_quicktime_atoms(file: &mut File, meta: &mut ExtractedVideoMetadata) {
-        let mut buffer = [0u8; 8192];
+        const CHUNK_SIZE: usize = 8192;
+        const OVERLAP: usize = 64;
+        let mut buffer = [0u8; CHUNK_SIZE];
         if file.seek(SeekFrom::Start(0)).is_err() {
             return;
         }
 
         // Search the first 512KB for common location atom signatures
-        let mut total_read = 0;
-        while total_read < 524288 {
+        let mut offset: u64 = 0;
+        while offset < 524288 {
+            if file.seek(SeekFrom::Start(offset)).is_err() {
+                break;
+            }
             let read_bytes = match file.read(&mut buffer) {
                 Ok(n) if n > 0 => n,
                 _ => break,
             };
 
-            // Search for ©xyz or xyz atom marker
-            for i in 0..read_bytes.saturating_sub(16) {
-                if (&buffer[i..i+4] == b"\xa9xyz" || &buffer[i..i+3] == b"xyz") && meta.latitude.is_none() {
-                    // QuickTime ISO 6709 coordinates string follows
-                    if let Ok(text) = std::str::from_utf8(&buffer[i+4..i+32.min(read_bytes)]) {
-                        if let Some((lat, lon)) = Self::parse_iso6709(text) {
-                            meta.latitude = Some(lat);
-                            meta.longitude = Some(lon);
-                            break;
-                        }
+            if Self::scan_buffer_for_iso6709(&buffer[..read_bytes], meta) {
+                break;
+            }
+
+            if read_bytes < CHUNK_SIZE {
+                break;
+            }
+            offset += (read_bytes - OVERLAP) as u64;
+        }
+    }
+
+    fn scan_buffer_for_iso6709(buf: &[u8], meta: &mut ExtractedVideoMetadata) -> bool {
+        if meta.latitude.is_some() || buf.len() < 8 {
+            return false;
+        }
+
+        // Search for ©xyz or xyz atom marker safely within bounds
+        for i in 0..buf.len().saturating_sub(4) {
+            let marker_len = if buf[i..].starts_with(b"\xa9xyz") {
+                4
+            } else if buf[i..].starts_with(b"xyz") {
+                3
+            } else {
+                continue;
+            };
+
+            let start = (i + marker_len).min(buf.len());
+            let end = (start + 64).min(buf.len());
+            let window = &buf[start..end];
+
+            // QuickTime udta ©xyz boxes often have 4 binary header bytes (2B len + 2B lang code like 0x15 0xC7)
+            // before the ASCII ISO 6709 string, and binary atom headers immediately after '/'.
+            if let Some(coord_str) = Self::extract_ascii_iso6709_candidate(window) {
+                if let Some((lat, lon)) = Self::parse_iso6709(&coord_str) {
+                    if (-90.0..=90.0).contains(&lat) && (-180.0..=180.0).contains(&lon) {
+                        meta.latitude = Some(lat);
+                        meta.longitude = Some(lon);
+                        return true;
                     }
                 }
             }
+        }
 
-            total_read += read_bytes;
+        false
+    }
+
+    fn extract_ascii_iso6709_candidate(window: &[u8]) -> Option<String> {
+        // Locate first '+' or '-' followed by an ASCII digit within the first 12 bytes after the marker
+        let max_prefix = window.len().min(12);
+        let rel_start = (0..max_prefix).find(|&idx| {
+            (window[idx] == b'+' || window[idx] == b'-')
+                && window.get(idx + 1).map(|b| b.is_ascii_digit()).unwrap_or(false)
+        })?;
+
+        let mut candidate = String::with_capacity(32);
+        for &b in &window[rel_start..] {
+            if b.is_ascii_digit() || b == b'+' || b == b'-' || b == b'.' {
+                candidate.push(b as char);
+            } else if b == b'/' {
+                candidate.push('/');
+                break;
+            } else {
+                break;
+            }
+        }
+
+        if candidate.len() >= 8 {
+            Some(candidate)
+        } else {
+            None
         }
     }
 
@@ -174,5 +234,27 @@ mod tests {
 
         let invalid = VideoMetadataParser::parse_iso6709("invalid_non_coordinates");
         assert!(invalid.is_none());
+    }
+
+    #[test]
+    fn test_scan_buffer_boundary_no_panic_and_binary_headers() {
+        // Regression test for panic at offset 8170 in 8192-byte buffer (8170 + 32 = 8202 > 8192)
+        let mut buf = vec![0u8; 8192];
+        buf[8170..8174].copy_from_slice(b"\xa9xyz");
+        let mut meta = ExtractedVideoMetadata::default();
+        assert!(!VideoMetadataParser::scan_buffer_for_iso6709(&buf, &mut meta));
+
+        // Also test marker at the very last valid bytes of buffer
+        buf.fill(0);
+        buf[8185..8188].copy_from_slice(b"xyz");
+        assert!(!VideoMetadataParser::scan_buffer_for_iso6709(&buf, &mut meta));
+
+        // Test realistic QuickTime udta ©xyz atom with non-UTF8 binary length/lang prefix and binary trailer
+        let mut qt_buf = vec![0u8; 256];
+        let atom = b"\xa9xyz\x00\x12\x15\xc7+34.0522-118.2437/\x00\x00\x00\x18\xff\xfe";
+        qt_buf[120..120 + atom.len()].copy_from_slice(atom);
+        assert!(VideoMetadataParser::scan_buffer_for_iso6709(&qt_buf, &mut meta));
+        assert!((meta.latitude.unwrap() - 34.0522).abs() < 1e-4);
+        assert!((meta.longitude.unwrap() - (-118.2437)).abs() < 1e-4);
     }
 }

@@ -103,7 +103,30 @@ pub fn delete_media_file(
 ) -> Result<Option<String>, String> {
     let conn = DatabaseManager::open(&state.db_path)
         .map_err(|e| format!("Failed to open DB: {}", e))?;
-    MediaRepository::delete_media_file(&conn, id, delete_from_disk).map_err(|e| e.to_string())
+    match MediaRepository::delete_media_file(&conn, id, delete_from_disk) {
+        Ok(deleted_path) => {
+            let _ = conn.execute(
+                "UPDATE libraries SET total_files = (SELECT count(*) FROM media_files WHERE library_id = libraries.id);",
+                [],
+            );
+            log::info!(
+                "[MediaCommand] Deleted media id={} (trash_on_disk={}): path={:?}",
+                id,
+                delete_from_disk,
+                deleted_path
+            );
+            Ok(deleted_path)
+        }
+        Err(e) => {
+            log::error!(
+                "[MediaCommand] Failed to delete media id={} (trash_on_disk={}): {}",
+                id,
+                delete_from_disk,
+                e
+            );
+            Err(e.to_string())
+        }
+    }
 }
 
 // --------------------------------------------------------------------------
@@ -299,9 +322,33 @@ pub fn batch_delete_media(
     ids: Vec<i64>,
     delete_from_disk: bool,
 ) -> Result<Vec<String>, String> {
+    let req_count = ids.len();
     let mut conn = DatabaseManager::open(&state.db_path)
         .map_err(|e| format!("Failed to open DB: {}", e))?;
-    MediaRepository::batch_delete_media(&mut conn, &ids, delete_from_disk).map_err(|e| e.to_string())
+    match MediaRepository::batch_delete_media(&mut conn, &ids, delete_from_disk) {
+        Ok(paths) => {
+            let _ = conn.execute(
+                "UPDATE libraries SET total_files = (SELECT count(*) FROM media_files WHERE library_id = libraries.id);",
+                [],
+            );
+            log::info!(
+                "[MediaCommand] Batch deleted {}/{} items (trash_on_disk={}).",
+                paths.len(),
+                req_count,
+                delete_from_disk
+            );
+            Ok(paths)
+        }
+        Err(e) => {
+            log::error!(
+                "[MediaCommand] Batch delete failed for {} items (trash_on_disk={}): {}",
+                req_count,
+                delete_from_disk,
+                e
+            );
+            Err(e.to_string())
+        }
+    }
 }
 
 #[tauri::command]
@@ -360,22 +407,49 @@ pub fn export_media_files(
     destination_folder: String,
 ) -> Result<u32, String> {
     use std::path::Path;
+    let total_requested = source_paths.len();
     let dest = Path::new(&destination_folder);
     if !dest.exists() {
-        std::fs::create_dir_all(dest).map_err(|e| format!("Failed to create destination folder: {}", e))?;
+        std::fs::create_dir_all(dest).map_err(|e| {
+            let msg = format!("Failed to create destination folder '{}': {}", destination_folder, e);
+            log::error!("[MediaCommand] {}", msg);
+            msg
+        })?;
     }
 
     let mut copied = 0u32;
+    let mut failed = 0u32;
     for path_str in source_paths {
         let src = Path::new(&path_str);
         if src.exists() && src.is_file() {
             if let Some(target) = resolve_collision_safe_path(dest, src) {
-                if std::fs::copy(src, target).is_ok() {
-                    copied += 1;
+                match std::fs::copy(src, &target) {
+                    Ok(_) => copied += 1,
+                    Err(e) => {
+                        if failed < 5 {
+                            log::warn!(
+                                "[MediaCommand] Failed to export '{}' -> '{}': {}",
+                                src.display(),
+                                target.display(),
+                                e
+                            );
+                        }
+                        failed += 1;
+                    }
                 }
             }
+        } else {
+            failed += 1;
         }
     }
+
+    log::info!(
+        "[MediaCommand] Export finished to '{}': {}/{} copied ({} failed/missing).",
+        destination_folder,
+        copied,
+        total_requested,
+        failed
+    );
     Ok(copied)
 }
 

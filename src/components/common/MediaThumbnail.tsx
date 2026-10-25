@@ -25,27 +25,34 @@ export const MediaThumbnail: React.FC<MediaThumbnailProps> = memo(({
 }) => {
   const [isPending, setIsPending] = useState(false);
   const [retryCount, setRetryCount] = useState(0);
-  const thumbnailRevision = useLibraryStore((s) => (isPending ? s.thumbnailRevision : 0));
+  const [fallbackDirectSrc, setFallbackDirectSrc] = useState<string | null>(null);
+  const [hasFailed, setHasFailed] = useState(false);
 
-  // Reset state if fileHash changes
+  const thumbnailRevision = useLibraryStore((s) => (isPending ? s.thumbnailRevision : 0));
+  const syncRevision = useLibraryStore((s) => s.syncRevision);
+
+  // Reset state if fileHash, filePath, or library syncRevision changes
   useEffect(() => {
     setIsPending(false);
     setRetryCount(0);
-  }, [fileHash]);
+    setFallbackDirectSrc(null);
+    setHasFailed(false);
+  }, [fileHash, filePath, syncRevision]);
 
-  // Trigger retry when background thumbnail worker emits batch completion
+  // Trigger immediate retry whenever background thumbnail worker completes a batch
   useEffect(() => {
-    if (isPending && thumbnailRevision > 0 && retryCount < 20) {
+    if (isPending && thumbnailRevision > 0) {
       setRetryCount((c) => c + 1);
     }
   }, [isPending, thumbnailRevision]);
 
-  // Fallback polling for pending thumbnails in case batch event already fired before mount
+  // Progressive-backoff fallback polling while genuinely pending (handles large 25k+ queues without hard cutoff)
   useEffect(() => {
-    if (!isPending || retryCount >= 20) return;
+    if (!isPending) return;
+    const delayMs = Math.min(8000, 1500 + retryCount * 400);
     const timer = setTimeout(() => {
       setRetryCount((c) => c + 1);
-    }, 1500);
+    }, delayMs);
     return () => clearTimeout(timer);
   }, [isPending, retryCount]);
 
@@ -54,8 +61,53 @@ export const MediaThumbnail: React.FC<MediaThumbnailProps> = memo(({
     orientation === 3 || orientation === 180 ? 180 :
     orientation === 8 || orientation === 270 ? 270 : 0;
 
+  if (hasFailed) {
+    const extMatch = filePath.split('.').pop();
+    const extBadge = extMatch && extMatch.length <= 6 ? extMatch.toUpperCase() : mediaType.toUpperCase();
+    return (
+      <div
+        className={className}
+        style={{
+          width: '100%',
+          height: '100%',
+          backgroundColor: '#141c2b',
+          display: 'flex',
+          flexDirection: 'column',
+          alignItems: 'center',
+          justifyContent: 'center',
+          gap: 4,
+          color: '#64748b',
+          fontSize: '0.68rem',
+          fontWeight: 600,
+          userSelect: 'none',
+          padding: 8,
+          textAlign: 'center',
+          ...style,
+        }}
+      >
+        <span
+          style={{
+            padding: '2px 6px',
+            borderRadius: 4,
+            backgroundColor: 'rgba(100, 116, 139, 0.16)',
+            color: '#94a3b8',
+            fontSize: '0.62rem',
+            letterSpacing: '0.04em',
+          }}
+        >
+          {extBadge}
+        </span>
+        <span>Preview unavailable</span>
+      </div>
+    );
+  }
+
   const baseUrl = getThumbnailUrl(fileHash, mediaType);
-  const srcUrl = retryCount > 0 && isTauri() ? `${baseUrl}?rev=${retryCount}` : baseUrl;
+  const srcUrl = fallbackDirectSrc
+    ? fallbackDirectSrc
+    : retryCount > 0 && isTauri()
+    ? `${baseUrl}?rev=${retryCount}`
+    : baseUrl;
 
   return (
     <img
@@ -67,20 +119,21 @@ export const MediaThumbnail: React.FC<MediaThumbnailProps> = memo(({
       onLoad={(e) => {
         const imgEl = e.currentTarget;
         // The backend "PROCESSING..." SVG has natural dimensions 385x289, whereas real thumbnails are <= 384px
-        if (imgEl.naturalWidth === 385 && imgEl.naturalHeight === 289) {
+        if (!fallbackDirectSrc && imgEl.naturalWidth === 385 && imgEl.naturalHeight === 289) {
           if (!isPending) setIsPending(true);
         } else if (isPending) {
           setIsPending(false);
         }
       }}
-      onError={(e) => {
+      onError={() => {
         setIsPending(false);
-        const imgEl = e.target as HTMLImageElement;
-        if (mediaType === 'photo' && isTauri() && !imgEl.src.includes('asset.localhost') && !imgEl.src.startsWith('asset://')) {
+        if (!fallbackDirectSrc && (mediaType === 'photo' || mediaType === 'raw') && isTauri()) {
           try {
-            imgEl.src = convertFileSrc(filePath);
+            setFallbackDirectSrc(convertFileSrc(filePath));
+            return;
           } catch {}
         }
+        setHasFailed(true);
       }}
       style={{
         width: '100%',

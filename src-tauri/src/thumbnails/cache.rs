@@ -1,5 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+
+static TEMP_FILE_SEQ: AtomicU64 = AtomicU64::new(1);
 
 pub struct ThumbnailCache {
     base_dir: PathBuf,
@@ -14,8 +17,33 @@ impl ThumbnailCache {
         Self { base_dir: dir }
     }
 
+    /// Verifies that a cached thumbnail file exists on disk and is non-empty.
+    /// Automatically cleans up any 0-byte leftover file from an interrupted write.
+    pub fn is_valid_cached_file(path: &Path) -> bool {
+        match fs::metadata(path) {
+            Ok(meta) if meta.is_file() && meta.len() > 0 => true,
+            Ok(meta) if meta.is_file() && meta.len() == 0 => {
+                let _ = fs::remove_file(path);
+                false
+            }
+            _ => false,
+        }
+    }
+
+    /// Generates a unique sibling temporary path ending in `.jpg` for atomic rename writes.
+    pub fn temp_path_for(dst_path: &Path) -> PathBuf {
+        let seq = TEMP_FILE_SEQ.fetch_add(1, Ordering::Relaxed);
+        let pid = std::process::id();
+        let stem = dst_path
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("thumb");
+        let parent = dst_path.parent().unwrap_or_else(|| Path::new("."));
+        parent.join(format!(".{}.{}_{}.tmp.jpg", stem, pid, seq))
+    }
+
     /// Resolves the absolute on-disk path for a thumbnail based on its file hash.
-    /// Organizes files into 2-character hex prefix buckets (e.g. `thumbnails/a1/a1b2c3d4.webp`)
+    /// Organizes files into 2-character hex prefix buckets (e.g. `thumbnails/a1/a1b2c3d4.jpg`)
     /// to avoid exceeding single-directory filesystem limits with 100k+ files.
     pub fn resolve_path(&self, file_hash: &str) -> PathBuf {
         let prefix = if file_hash.len() >= 2 {
@@ -29,14 +57,14 @@ impl ThumbnailCache {
             let _ = fs::create_dir_all(&bucket_dir);
         }
 
-        // Prefer existing .jpg or .webp if already present on disk
+        // Prefer existing non-empty .jpg or .webp if already present on disk
         let jpg_path = bucket_dir.join(format!("{}.jpg", file_hash));
-        if jpg_path.exists() {
+        if Self::is_valid_cached_file(&jpg_path) {
             return jpg_path;
         }
 
         let webp_path = bucket_dir.join(format!("{}.webp", file_hash));
-        if webp_path.exists() {
+        if Self::is_valid_cached_file(&webp_path) {
             return webp_path;
         }
 
@@ -55,9 +83,9 @@ impl ThumbnailCache {
         format!("thumbnails/{}/{}.{}", prefix, file_hash, ext)
     }
 
-    /// Checks if a thumbnail is already generated on disk
+    /// Checks if a non-empty thumbnail is already generated on disk
     pub fn exists(&self, file_hash: &str) -> bool {
-        self.resolve_path(file_hash).exists()
+        Self::is_valid_cached_file(&self.resolve_path(file_hash))
     }
 
     pub fn get_base_dir(&self) -> &Path {

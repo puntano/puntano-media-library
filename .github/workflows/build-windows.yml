@@ -42,19 +42,18 @@ jobs:
           releaseBody: |
             ## What's New in Puntano Media Library v__VERSION__
 
-            ### 🚀 Feature Enhancements
-            - **Offline Reverse Geocoding & Place-Name Search**: Built-in global gazetteer with Haversine distance lookup and bounding-box search (search by city, region, or country names such as `"San Luis"`, `"Buenos Aires"`, `"Tokyo"`, `"Japan"` completely offline).
-            - **Lightbox Curation, Panning & Slideshow**: Mouse-wheel zoom (`0.5x`–`5x`), click-and-drag panning, double-click zoom toggle, auto-advancing Slideshow (`S` key with `3s`/`4s`/`6s` intervals), in-viewer Favorite (`F`), 1–5 Star Rating (`1`–`5`), Info Inspector (`I`), and Delete (`Delete`).
-            - **OS Recycle Bin / Trash Support**: Safe file deletion moving single or batch files to the OS Recycle Bin / Trash (`trash` crate) instead of permanent deletion.
-            - **Bulk Duplicate Auto-Clean & Multi-Region Hashing**: One-click **"Keep 1 Copy Per Cluster"** auto-clean in Duplicates Manager, backed by multi-region `xxh3_64` hashing (`512KB` head + `64KB` middle + `64KB` tail + file size).
-            - **FFmpeg-Free Video Thumbnails**: Automatic embedded cover extraction and Cinema Filmstrip fallback poster generation when external `ffmpeg` is not installed.
+            ### 🛠️ Critical Bug Fixes & Stability
+            - **Video ISO 6709 GPS Scanner Fix**: Resolved a slice out-of-bounds panic (`src/metadata/video.rs`) when scanning MP4/MOV coordinates near 8 KB chunk boundaries or binary QuickTime `udta` headers.
+            - **Monotonic Indexing Progress & Smooth UI Updates**: Fixed erratic oscillating file counters and percentages during Stage 2 indexing, added an animated indeterminate discovery bar, guarded against concurrent scans, and moved progress event handling to a single global listener.
+            - **Accurate File Discovery & Automatic Reconciliation**: Canonicalized Windows paths to eliminate case-duplicate database entries, excluded `0`-byte files, symlinks, Windows hidden/system entries, and NAS/auxiliary directories (`@eaDir`, `@Recycle`, `.thumbnails`, `*.lrdata`, `._*`), and automatically pruned deleted or stale records on re-scan.
+            - **Eliminated Stuck `"PROCESSING..."` Thumbnails**:
+              - Decoupled scan cancellation (`indexing_cancel_token`) from daemon lifecycle (`shutdown_token`) so cancelling a scan never stops the background thumbnail worker or live folder watcher.
+              - Added native OS codec thumbnail extraction (Windows WIC / Media Foundation `IShellItemImageFactory` & macOS `sips`) plus `tiff`/`bmp`/`gif`/`ico` support for `.heic`, `.heif`, `.avif`, RAW, and FFmpeg-free video frames.
+              - Prioritized newest items first in the thumbnail queue, added atomic `.tmp.jpg` cache writes, healed previously failed or missing-cache thumbnails automatically on startup, and added progressive retry with graceful fallback tiles for unsupported formats.
 
-            ### ✨ Workflow & Reliability Improvements
-            - **Album Management**: Rename/edit albums, set custom album cover photos, and remove items from albums without deleting media from the library.
-            - **Tag Management**: 8-color palette picker when creating tags, plus global tag deletion from the Filter Bar and Inspector.
-            - **Date Range Filtering**: Quick date presets (`All Time`, `Last 30 Days`, `This Year`, `Last Year`) and custom `From`/`To` date pickers.
-            - **Differential Re-Scan & Watcher Sync**: Skip unchanged files via `(file_path, file_size, modified_at)` pre-check, preserve manual 90° rotations across re-scans, and dynamically register newly added folders with the live filesystem watcher.
-            - **RAW Photo Support & Auto-Refreshing Thumbnails**: Included `raw` media in library counters, filters, and lightbox preview; thumbnails update automatically via `"thumbnails-ready"` events.
-            - **Map View Sync**: Global filters apply to Map View markers, and clicking **View on Map** flies directly to the selected photo's coordinates.
+            ### 🔍 Production Logging & Diagnostics Overhaul
+            - **Cross-Restart Log Seeding & Sticky Error Buffer**: Seeded in-memory diagnostic logs from the tail of `puntano.log` on launch and added a dedicated sticky alert buffer so `[WARN]`, `[ERROR]`, and `[FATAL]` entries survive app restarts and heavy `INFO` logging.
+            - **Enriched Panic Traces & WebView Error Forwarding**: Added thread names and compact backtraces to the Rust panic hook, plus full-stack `window.onerror`, `unhandledrejection`, and React `ErrorBoundary` forwarding into `puntano.log`.
+            - **Comprehensive Diagnostic Reports & Privacy Redaction**: Included registered library paths/counts, photo/RAW/video/duplicate breakdowns, thumbnail queue health, top file extensions, FFmpeg/CPU/free-disk-space telemetry, cloud-placeholder warnings (OneDrive / Google Drive / iCloud), and a default-enabled **Redact username** toggle when copying reports.
           releaseDraft: false
           prerelease: false

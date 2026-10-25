@@ -16,7 +16,22 @@ import {
 // Check if running inside native Tauri runtime
 export const isTauri = () => typeof window !== 'undefined' && '__TAURI_INTERNALS__' in window;
 
+let frontendLogWindowStart = Date.now();
+let frontendLogCount = 0;
+
 export const tauriApi = {
+  logFrontendEvent(level: 'warn' | 'error' | 'fatal', source: string, message: string): void {
+    const now = Date.now();
+    if (now - frontendLogWindowStart > 60_000) {
+      frontendLogWindowStart = now;
+      frontendLogCount = 0;
+    }
+    if (frontendLogCount >= 30) return;
+    frontendLogCount += 1;
+
+    if (!isTauri()) return;
+    invoke('log_frontend_event', { level, source, message }).catch(() => {});
+  },
   async startIndexing(folderPath: string): Promise<number> {
     if (!isTauri()) {
       console.warn('[Mock] startIndexing:', folderPath);
@@ -532,15 +547,32 @@ export const tauriApi = {
   async getDiagnosticReport(): Promise<DiagnosticReport> {
     if (!isTauri()) {
       return {
-        app_version: '0.4.0',
+        app_version: '0.4.1',
         os_name: 'windows',
         os_family: 'windows',
         arch: 'x86_64',
+        cpu_threads: 16,
+        ffmpeg_available: false,
         db_path: 'C:\\Users\\Mock\\AppData\\Roaming\\puntano\\puntano.db',
         db_size_bytes: 48500000,
+        db_free_space_bytes: 128 * 1024 * 1024 * 1024,
+        cache_dir_path: 'C:\\Users\\Mock\\AppData\\Local\\puntano\\cache',
         log_file_path: 'C:\\Users\\Mock\\AppData\\Roaming\\puntano\\logs\\puntano.log',
         total_libraries: 2,
+        registered_libraries: [
+          '[#1] C:\\Users\\User\\Pictures\\Photos_2026 (8420 files, active)',
+          '[#2] D:\\Archive\\Vacation_Videos (4060 files, active)',
+        ],
         total_media_files: 12480,
+        photos_count: 10120,
+        raw_count: 120,
+        videos_count: 2240,
+        duplicate_extra_files: 34,
+        thumbnails_ready: 12450,
+        thumbnails_pending: 30,
+        thumbnails_failed: 0,
+        top_extensions: ['.jpg (8420)', '.mp4 (2240)', '.heic (1700)', '.dng (120)'],
+        critical_alerts: [],
         recent_logs: [
           '2026-10-13 11:30:00 [INFO ] [lib] SQLite initialized with R*Tree support',
           '2026-10-13 11:30:01 [INFO ] [indexer] Discovery complete: 12,480 files found',

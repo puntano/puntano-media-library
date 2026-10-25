@@ -20,11 +20,20 @@ interface DiagnosticModalProps {
   initialError?: string | null;
 }
 
+function redactSensitiveText(input: string): string {
+  return input
+    .replace(/([A-Za-z]:\\+Users\\+)([^\\/"'\s]+)/gi, '$1<USER>')
+    .replace(/([A-Za-z]:\/+Users\/+)([^\\/"'\s]+)/gi, '$1<USER>')
+    .replace(/(\/Users\/)([^\\/"'\s]+)/g, '$1<USER>')
+    .replace(/(\/home\/)([^\\/"'\s]+)/g, '$1<USER>');
+}
+
 export const DiagnosticModal: React.FC<DiagnosticModalProps> = ({ onClose, initialError }) => {
   const [report, setReport] = useState<DiagnosticReport | null>(null);
   const [logs, setLogs] = useState<string[]>([]);
   const [isLoading, setIsLoading] = useState(true);
   const [copied, setCopied] = useState(false);
+  const [redactPaths, setRedactPaths] = useState(true);
   const [logFilter, setLogFilter] = useState<'all' | 'errors' | 'warnings'>('all');
   const logTerminalRef = useRef<HTMLDivElement>(null);
 
@@ -54,16 +63,40 @@ export const DiagnosticModal: React.FC<DiagnosticModalProps> = ({ onClose, initi
   const handleCopyReport = async () => {
     if (!report) return;
 
-    const filteredLogsText = logs.slice(-50).join('\n');
-    const md = `### Puntano Media Library Diagnostic Report
+    const maybeRedact = (s: string) => (redactPaths ? redactSensitiveText(s) : s);
+
+    const filteredLogsText = logs.slice(-120).join('\n');
+    const librariesSection =
+      report.registered_libraries && report.registered_libraries.length > 0
+        ? `\n### Registered Libraries (${report.total_libraries}):\n${report.registered_libraries
+            .map((lib) => `- \`${lib}\``)
+            .join('\n')}\n`
+        : '';
+    const alertsSection =
+      report.critical_alerts && report.critical_alerts.length > 0
+        ? `\n### Sticky Warnings & Errors (${report.critical_alerts.length}):\n\`\`\`\n${report.critical_alerts.join('\n')}\n\`\`\`\n`
+        : '';
+    const extensionsLine =
+      report.top_extensions && report.top_extensions.length > 0
+        ? `- **Top Extensions**: ${report.top_extensions.join(', ')}\n`
+        : '';
+    const freeSpaceStr =
+      report.db_free_space_bytes != null
+        ? ` (${(report.db_free_space_bytes / (1024 * 1024 * 1024)).toFixed(1)} GB free on drive)`
+        : '';
+
+    const rawMd = `### Puntano Media Library Diagnostic Report
 - **App Version**: ${report.app_version}
-- **Operating System**: ${report.os_name} (${report.os_family}, ${report.arch})
+- **Operating System**: ${report.os_name} (${report.os_family}, ${report.arch}, ${report.cpu_threads} threads)
+- **FFmpeg Detected**: ${report.ffmpeg_available ? 'Yes' : 'No (using OS native / fallback extractors)'}
 - **Database Path**: \`${report.db_path}\`
-- **Database Size**: ${(report.db_size_bytes / (1024 * 1024)).toFixed(2)} MB
+- **Database Size**: ${(report.db_size_bytes / (1024 * 1024)).toFixed(2)} MB${freeSpaceStr}
+- **Thumbnail Cache**: \`${report.cache_dir_path}\`
 - **Log File**: \`${report.log_file_path}\`
 - **Total Registered Libraries**: ${report.total_libraries}
-- **Total Indexed Files**: ${report.total_media_files}
-${initialError ? `\n### Error Encountered:\n\`\`\`\n${initialError}\n\`\`\`\n` : ''}
+- **Total Indexed Files**: ${report.total_media_files} (${report.photos_count} photos, ${report.raw_count} RAW, ${report.videos_count} videos, ${report.duplicate_extra_files} duplicate copies)
+- **Thumbnails**: ${report.thumbnails_ready} ready, ${report.thumbnails_pending} pending, ${report.thumbnails_failed} failed
+${extensionsLine}${librariesSection}${initialError ? `\n### Error Encountered:\n\`\`\`\n${initialError}\n\`\`\`\n` : ''}${alertsSection}
 ### Recent Diagnostic Logs:
 \`\`\`
 ${filteredLogsText}
@@ -71,7 +104,7 @@ ${filteredLogsText}
 `;
 
     try {
-      await navigator.clipboard.writeText(md);
+      await navigator.clipboard.writeText(maybeRedact(rawMd));
       setCopied(true);
       setTimeout(() => setCopied(false), 3000);
     } catch (err) {
@@ -102,7 +135,20 @@ ${filteredLogsText}
     );
   };
 
-  const filteredLogs = logs.filter((line) => {
+  const mergedAlertSource = React.useMemo(() => {
+    const sticky = report?.critical_alerts || [];
+    const seen = new Set<string>();
+    const combined: string[] = [];
+    for (const line of [...sticky, ...logs]) {
+      if (!seen.has(line)) {
+        seen.add(line);
+        combined.push(line);
+      }
+    }
+    return combined;
+  }, [report, logs]);
+
+  const filteredLogs = (logFilter === 'all' ? logs : mergedAlertSource).filter((line) => {
     if (logFilter === 'errors') {
       return line.includes('[ERROR') || line.includes('[FATAL');
     }
@@ -230,6 +276,9 @@ ${filteredLogsText}
                 <div style={{ fontWeight: 600, fontSize: '0.85rem', marginTop: 4, textTransform: 'capitalize' }}>
                   {report.os_name} ({report.arch})
                 </div>
+                <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                  {report.cpu_threads} threads • {report.ffmpeg_available ? 'FFmpeg ready' : 'Native codecs'}
+                </div>
               </div>
 
               <div
@@ -242,6 +291,11 @@ ${filteredLogsText}
                 <div style={{ fontWeight: 600, fontSize: '0.85rem', marginTop: 4 }}>
                   {(report.db_size_bytes / (1024 * 1024)).toFixed(1)} MB
                 </div>
+                {report.db_free_space_bytes != null && (
+                  <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                    {(report.db_free_space_bytes / (1024 * 1024 * 1024)).toFixed(1)} GB free on disk
+                  </div>
+                )}
               </div>
 
               <div
@@ -262,7 +316,60 @@ ${filteredLogsText}
                 <div style={{ fontWeight: 600, fontSize: '0.85rem', marginTop: 4 }}>
                   {report.total_media_files.toLocaleString()}
                 </div>
+                <div style={{ fontSize: '0.66rem', color: 'var(--text-muted)', marginTop: 2 }}>
+                  {report.photos_count.toLocaleString()}P • {report.videos_count.toLocaleString()}V
+                  {report.duplicate_extra_files > 0 ? ` • ${report.duplicate_extra_files.toLocaleString()} dup` : ''}
+                </div>
               </div>
+            </div>
+          )}
+
+          {/* Thumbnail & Library Health Summary */}
+          {report && (
+            <div
+              className="glass-panel"
+              style={{
+                padding: '10px 14px',
+                borderRadius: 'var(--radius-md)',
+                display: 'flex',
+                flexWrap: 'wrap',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                gap: 10,
+                fontSize: '0.74rem',
+              }}
+            >
+              <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
+                <span style={{ color: 'var(--text-muted)' }}>Thumbnails:</span>
+                <span style={{ color: '#10b981', fontWeight: 600 }}>
+                  {report.thumbnails_ready.toLocaleString()} ready
+                </span>
+                <span style={{ color: '#38bdf8', fontWeight: 600 }}>
+                  {report.thumbnails_pending.toLocaleString()} pending
+                </span>
+                <span
+                  style={{
+                    color: report.thumbnails_failed > 0 ? 'var(--status-danger)' : 'var(--text-muted)',
+                    fontWeight: 600,
+                  }}
+                >
+                  {report.thumbnails_failed.toLocaleString()} failed
+                </span>
+              </div>
+              {report.top_extensions.length > 0 && (
+                <div
+                  style={{
+                    color: 'var(--text-secondary)',
+                    overflow: 'hidden',
+                    textOverflow: 'ellipsis',
+                    whiteSpace: 'nowrap',
+                    maxWidth: '55%',
+                  }}
+                  title={report.top_extensions.join(', ')}
+                >
+                  Formats: {report.top_extensions.slice(0, 4).join(', ')}
+                </div>
+              )}
             </div>
           )}
 
@@ -423,7 +530,7 @@ ${filteredLogsText}
             backgroundColor: 'rgba(0, 0, 0, 0.25)',
           }}
         >
-          <div style={{ display: 'flex', gap: 10 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 12 }}>
             <button
               className="btn-primary"
               onClick={handleCopyReport}
@@ -441,6 +548,27 @@ ${filteredLogsText}
               <ExternalLink size={14} />
               Report Issue on GitHub
             </button>
+
+            <label
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                gap: 6,
+                fontSize: '0.73rem',
+                color: 'var(--text-secondary)',
+                cursor: 'pointer',
+                userSelect: 'none',
+              }}
+              title="Replaces your OS username in file paths with <USER> when copying the report"
+            >
+              <input
+                type="checkbox"
+                checked={redactPaths}
+                onChange={(e) => setRedactPaths(e.target.checked)}
+                style={{ accentColor: 'var(--accent-primary)', cursor: 'pointer' }}
+              />
+              Redact username
+            </label>
           </div>
 
           <button

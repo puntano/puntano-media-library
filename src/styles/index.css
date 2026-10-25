@@ -175,3 +175,33 @@ body, html {
     transform: translateX(0);
   }
 }
+
+@keyframes spin {
+  from {
+    transform: rotate(0deg);
+  }
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+.animate-spin {
+  animation: spin 1s linear infinite;
+}
+
+@keyframes indeterminateSlide {
+  0% {
+    transform: translateX(-100%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
+.progress-indeterminate {
+  width: 40%;
+  height: 100%;
+  border-radius: 4px;
+  background: var(--accent-gradient);
+  animation: indeterminateSlide 1.3s ease-in-out infinite;
+}

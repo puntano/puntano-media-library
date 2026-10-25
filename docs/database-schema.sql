@@ -175,9 +175,13 @@ ON media_files(file_path, file_modified_at, file_size);
 CREATE INDEX IF NOT EXISTS idx_media_hash 
 ON media_files(file_hash);
 
--- Fast Thumbnail Worker Queue
+-- Fast Thumbnail Worker Queue (ordered newest-first to match Gallery/Timeline)
 CREATE INDEX IF NOT EXISTS idx_media_thumb_status 
 ON media_files(thumbnail_status) 
+WHERE thumbnail_status = 'pending';
+
+CREATE INDEX IF NOT EXISTS idx_media_thumb_pending_order
+ON media_files(COALESCE(captured_at, file_modified_at) DESC, id DESC)
 WHERE thumbnail_status = 'pending';
 
 -- Fast Coarse Zoom-Level Clustering via Geohash

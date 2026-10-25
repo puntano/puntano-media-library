@@ -11,6 +11,7 @@ import {
   Copy,
   Keyboard,
   Terminal,
+  Loader2,
 } from 'lucide-react';
 import { useLibraryStore } from './stores/libraryStore';
 import { tauriApi } from './services/tauriApi';
@@ -35,6 +36,9 @@ export const App: React.FC = () => {
     setMediaTypeFilter,
     totalMediaCount,
     setTotalMediaCount,
+    isIndexing,
+    setIsIndexing,
+    setIndexingProgress,
     incrementSyncRevision,
     incrementThumbnailRevision,
     isDuplicateModalOpen,
@@ -73,16 +77,65 @@ export const App: React.FC = () => {
     return () => window.removeEventListener('keydown', handleGlobalKey);
   }, [isShortcutsModalOpen, setShortcutsModalOpen, setActiveView]);
 
+  // Global indexing progress listener (single subscription across modal open/close & re-scans)
+  useEffect(() => {
+    let isDisposed = false;
+    let lastLiveRefresh = 0;
+
+    const unlistenPromise = tauriApi.onIndexingProgress((progress) => {
+      if (isDisposed) return;
+      setIndexingProgress(progress);
+
+      if (progress.is_complete) {
+        setIsIndexing(false);
+        tauriApi
+          .getTotalMediaCount()
+          .then((count) => {
+            if (!isDisposed) {
+              setTotalMediaCount(count);
+              incrementSyncRevision();
+            }
+          })
+          .catch(console.error);
+      } else {
+        setIsIndexing(true);
+        const now = Date.now();
+        if (progress.stage === 'indexing' && progress.indexed_files > 0 && now - lastLiveRefresh >= 2500) {
+          lastLiveRefresh = now;
+          tauriApi
+            .getTotalMediaCount()
+            .then((count) => {
+              if (!isDisposed) {
+                setTotalMediaCount(count);
+                incrementSyncRevision();
+              }
+            })
+            .catch(() => {});
+        }
+      }
+    });
+
+    return () => {
+      isDisposed = true;
+      unlistenPromise.then((unlisten) => unlisten());
+    };
+  }, [setIndexingProgress, setIsIndexing, setTotalMediaCount, incrementSyncRevision]);
+
   // Real-time synchronization when live watcher detects filesystem changes
   useEffect(() => {
+    let isDisposed = false;
     let debounceTimer: ReturnType<typeof setTimeout> | null = null;
     const unlistenPromise = tauriApi.onLibraryIncrementalSync((_path) => {
+      if (isDisposed) return;
       if (debounceTimer) clearTimeout(debounceTimer);
       debounceTimer = setTimeout(async () => {
+        if (isDisposed) return;
         try {
           const count = await tauriApi.getTotalMediaCount();
-          setTotalMediaCount(count);
-          incrementSyncRevision();
+          if (!isDisposed) {
+            setTotalMediaCount(count);
+            incrementSyncRevision();
+          }
         } catch (err) {
           console.error('Failed to sync on watcher event:', err);
         }
@@ -90,6 +143,7 @@ export const App: React.FC = () => {
     });
 
     return () => {
+      isDisposed = true;
       if (debounceTimer) clearTimeout(debounceTimer);
       unlistenPromise.then((unlisten) => unlisten());
     };
@@ -97,15 +151,20 @@ export const App: React.FC = () => {
 
   // Real-time notification when background thumbnail worker finishes batches
   useEffect(() => {
+    let isDisposed = false;
     let thumbTimer: ReturnType<typeof setTimeout> | null = null;
     const unlistenPromise = tauriApi.onThumbnailsReady(() => {
+      if (isDisposed) return;
       if (thumbTimer) clearTimeout(thumbTimer);
       thumbTimer = setTimeout(() => {
-        incrementThumbnailRevision();
+        if (!isDisposed) {
+          incrementThumbnailRevision();
+        }
       }, 300);
     });
 
     return () => {
+      isDisposed = true;
       if (thumbTimer) clearTimeout(thumbTimer);
       unlistenPromise.then((unlisten) => unlisten());
     };
@@ -333,8 +392,8 @@ export const App: React.FC = () => {
 
           {/* Indexing Trigger Button */}
           <button className="btn-primary" onClick={() => setShowIndexModal(true)} style={{ gap: 6 }}>
-            <Plus size={16} />
-            Index Directory
+            {isIndexing ? <Loader2 size={16} className="animate-spin" /> : <Plus size={16} />}
+            {isIndexing ? 'Indexing...' : 'Index Directory'}
           </button>
         </div>
       </header>
