@@ -4,6 +4,7 @@ pub mod indexer;
 pub mod logger;
 pub mod metadata;
 pub mod models;
+pub mod recognition;
 pub mod thumbnails;
 
 use std::collections::HashSet;
@@ -77,18 +78,70 @@ pub fn run() {
             let raw_path = request.uri().path();
             let clean = raw_path.trim_start_matches('/');
             let file_part = clean.strip_prefix("localhost/").unwrap_or(clean);
-            let file_hash = file_part
-                .split('?')
-                .next()
-                .unwrap_or(file_part)
-                .trim_end_matches(".jpg")
-                .trim_end_matches(".webp");
 
             let app_handle = ctx.app_handle();
             let cache_dir = app_handle
                 .path()
                 .app_cache_dir()
                 .unwrap_or_else(|_| std::path::PathBuf::from("."));
+
+            // Support cropped face avatar requests: puntano-thumb://face/{face_id}
+            if let Some(face_subpath) = file_part.strip_prefix("face/") {
+                let face_id_str = face_subpath.split('?').next().unwrap_or(face_subpath).trim_end_matches(".jpg");
+                if let Ok(face_id) = face_id_str.parse::<i64>() {
+                    let face_thumb_dir = cache_dir.join("faces");
+                    let face_thumb_file = face_thumb_dir.join(format!("{}.jpg", face_id));
+
+                    if face_thumb_file.exists() {
+                        if let Ok(bytes) = fs::read(&face_thumb_file) {
+                            return Response::builder()
+                                .header(header::CONTENT_TYPE, "image/jpeg")
+                                .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+                                .body(bytes)
+                                .unwrap();
+                        }
+                    }
+
+                    // On-demand crop of detected face with 20% margin
+                    if let Ok(db_path) = app_handle.path().app_data_dir().map(|d| d.join("puntano.db")) {
+                        if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+                            if let Ok(Some((src_path, bx, by, bw, bh))) = crate::db::batch::MediaRepository::get_face_crop_by_id(&conn, face_id) {
+                                if let Ok(img) = image::open(&src_path) {
+                                    use image::GenericImageView;
+                                    let (w, h) = img.dimensions();
+                                    let pad_x = bw * 0.20;
+                                    let pad_y = bh * 0.20;
+                                    let x1 = ((bx - pad_x) * w as f32).max(0.0) as u32;
+                                    let y1 = ((by - pad_y) * h as f32).max(0.0) as u32;
+                                    let x2 = ((bx + bw + pad_x) * w as f32).min(w as f32) as u32;
+                                    let y2 = ((by + bh + pad_y) * h as f32).min(h as f32) as u32;
+                                    let crop_w = (x2.saturating_sub(x1)).max(1);
+                                    let crop_h = (y2.saturating_sub(y1)).max(1);
+                                    let cropped = img.crop_imm(x1, y1, crop_w, crop_h);
+                                    let thumb = cropped.resize_exact(200, 200, image::imageops::FilterType::Triangle);
+                                    let _ = fs::create_dir_all(&face_thumb_dir);
+                                    let _ = thumb.save(&face_thumb_file);
+
+                                    if let Ok(bytes) = fs::read(&face_thumb_file) {
+                                        return Response::builder()
+                                            .header(header::CONTENT_TYPE, "image/jpeg")
+                                            .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+                                            .body(bytes)
+                                            .unwrap();
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+
+            let file_hash = file_part
+                .split('?')
+                .next()
+                .unwrap_or(file_part)
+                .trim_end_matches(".jpg")
+                .trim_end_matches(".webp");
 
             let cache = ThumbnailCache::new(&cache_dir);
             let target_file = cache.resolve_path(file_hash);
@@ -278,6 +331,15 @@ pub fn run() {
                 shutdown_token.clone(),
             );
 
+            // Initialize facial recognition worker with dedicated database connection
+            let face_db = Arc::new(std::sync::Mutex::new(
+                DatabaseManager::open(&db_path).expect("Failed to open DB for face worker")
+            ));
+            let face_worker = Arc::new(crate::recognition::worker::FaceScanWorker::new(
+                face_db,
+                app.handle().clone(),
+            ));
+
             app.manage(AppState {
                 db_path,
                 shutdown_token,
@@ -285,6 +347,7 @@ pub fn run() {
                 is_indexing_active,
                 failed_hashes,
                 watcher_tx: std::sync::Mutex::new(watcher_tx),
+                face_worker,
             });
 
             Ok(())
@@ -336,6 +399,14 @@ pub fn run() {
             commands::media::set_media_orientation,
             commands::media::resolve_location_name,
             commands::media::export_media_files,
+            commands::people::query_people,
+            commands::people::query_person_media,
+            commands::people::update_person_name,
+            commands::people::merge_people,
+            commands::people::get_media_faces,
+            commands::people::start_face_scan,
+            commands::people::stop_face_scan,
+            commands::people::get_face_scan_progress,
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

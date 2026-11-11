@@ -12,6 +12,9 @@ import {
   Tag,
   LibraryStats,
   DiagnosticReport,
+  Person,
+  MediaFace,
+  FaceScanProgress,
 } from '../types/media';
 
 // Check if running inside native Tauri runtime
@@ -607,6 +610,79 @@ export const tauriApi = {
       return;
     }
     await invoke('open_release_page', { url });
+  },
+
+  // --------------------------------------------------------------------------
+  // People & Facial Recognition
+  // --------------------------------------------------------------------------
+
+  async getPeople(): Promise<Person[]> {
+    if (!isTauri()) {
+      return [
+        {
+          id: 1,
+          name: 'Hugo',
+          cover_face_id: 1,
+          cover_media_id: 101,
+          cover_media_hash: 'mock_hugo',
+          face_count: 142,
+          created_at: new Date().toISOString(),
+        },
+      ];
+    }
+    return await invoke<Person[]>('query_people');
+  },
+
+  async getPersonMedia(personId: number): Promise<MediaItem[]> {
+    if (!isTauri()) return [];
+    return await invoke<MediaItem[]>('query_person_media', { personId });
+  },
+
+  async updatePersonName(personId: number, name: string | null): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('update_person_name', { personId, name });
+  },
+
+  async mergePeople(targetPersonId: number, sourcePersonIds: number[]): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('merge_people', { targetPersonId, sourcePersonIds });
+  },
+
+  async getMediaFaces(mediaId: number): Promise<MediaFace[]> {
+    if (!isTauri()) return [];
+    return await invoke<MediaFace[]>('get_media_faces', { mediaId });
+  },
+
+  async startFaceScan(): Promise<boolean> {
+    if (!isTauri()) return true;
+    return await invoke<boolean>('start_face_scan');
+  },
+
+  async stopFaceScan(): Promise<void> {
+    if (!isTauri()) return;
+    await invoke('stop_face_scan');
+  },
+
+  async getFaceScanProgress(): Promise<FaceScanProgress> {
+    if (!isTauri()) {
+      return {
+        total_scannable: 1000,
+        total_scanned: 500,
+        faces_found: 120,
+        people_identified: 15,
+        is_running: false,
+      };
+    }
+    return await invoke<FaceScanProgress>('get_face_scan_progress');
+  },
+
+  onFaceScanProgress(callback: (progress: FaceScanProgress) => void): Promise<UnlistenFn> {
+    if (!isTauri()) {
+      return Promise.resolve(() => {});
+    }
+    return listen<FaceScanProgress>('recognition:progress', (event) => {
+      callback(event.payload);
+    });
   },
 
 

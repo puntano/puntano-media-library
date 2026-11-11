@@ -155,6 +155,41 @@ export interface LibraryStats {
   total_tags: number;
 }
 
+export interface Person {
+  id: number;
+  name?: string | null;
+  cover_face_id?: number | null;
+  cover_media_id?: number | null;
+  cover_media_hash?: string | null;
+  cover_bbox_x?: number | null;
+  cover_bbox_y?: number | null;
+  cover_bbox_w?: number | null;
+  cover_bbox_h?: number | null;
+  face_count: number;
+  created_at: string;
+}
+
+export interface MediaFace {
+  id: number;
+  media_id: number;
+  person_id?: number | null;
+  person_name?: string | null;
+  bbox_x: number;
+  bbox_y: number;
+  bbox_w: number;
+  bbox_h: number;
+  confidence: number;
+}
+
+export interface FaceScanProgress {
+  total_scannable: number;
+  total_scanned: number;
+  faces_found: number;
+  people_identified: number;
+  current_file?: string | null;
+  is_running: boolean;
+}
+
 export interface DiagnosticReport {
   app_version: string;
   os_name: string;

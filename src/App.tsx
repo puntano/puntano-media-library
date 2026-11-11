@@ -4,6 +4,7 @@ import {
   Calendar as CalendarIcon,
   Grid3X3,
   FolderHeart,
+  Users,
   Image as ImageIcon,
   Film,
   Plus,
@@ -21,6 +22,7 @@ import { MapView } from './components/map/MapView';
 import { TimelineView } from './components/timeline/TimelineView';
 import { VirtualGallery } from './components/gallery/VirtualGallery';
 import { AlbumsView } from './components/albums/AlbumsView';
+import { PeopleView } from './components/people/PeopleView';
 import { IndexingPanel } from './components/indexing/IndexingPanel';
 import { MetadataDrawer } from './components/inspector/MetadataDrawer';
 import { FilterBar } from './components/search/FilterBar';
@@ -100,6 +102,8 @@ export const App: React.FC = () => {
         setActiveView('gallery');
       } else if (e.key === '4') {
         setActiveView('albums');
+      } else if (e.key === '5') {
+        setActiveView('people');
       }
     };
     window.addEventListener('keydown', handleGlobalKey);
@@ -339,6 +343,26 @@ export const App: React.FC = () => {
             <FolderHeart size={15} />
             Albums
           </button>
+          <button
+            onClick={() => setActiveView('people')}
+            style={{
+              padding: '6px 16px',
+              borderRadius: 'var(--radius-sm)',
+              border: 'none',
+              cursor: 'pointer',
+              fontWeight: 600,
+              fontSize: '0.85rem',
+              backgroundColor: activeView === 'people' ? 'var(--accent-primary)' : 'transparent',
+              color: activeView === 'people' ? '#ffffff' : 'var(--text-secondary)',
+              display: 'flex',
+              alignItems: 'center',
+              gap: 8,
+              transition: 'all 0.15s ease',
+            }}
+          >
+            <Users size={15} />
+            People
+          </button>
         </div>
 
         {/* Right Action Bar */}
@@ -467,6 +491,7 @@ export const App: React.FC = () => {
         {activeView === 'timeline' && <TimelineView />}
         {activeView === 'gallery' && <VirtualGallery />}
         {activeView === 'albums' && <AlbumsView />}
+        {activeView === 'people' && <PeopleView />}
       </main>
 
       {/* Duplicates Cleaner Modal */}

@@ -1,8 +1,8 @@
 use chrono::Datelike;
 use rusqlite::{params, Connection, OptionalExtension, Result};
 use crate::models::{
-    Album, DuplicateGroup, LibraryStats, MediaFilterQuery, MediaItem, MemoryGroup,
-    SpatialBoundingBox, SpatialClusterPoint, Tag, TimelineGroup,
+    Album, DuplicateGroup, LibraryStats, MediaFace, MediaFilterQuery, MediaItem, MemoryGroup,
+    Person, SpatialBoundingBox, SpatialClusterPoint, Tag, TimelineGroup,
 };
 
 pub struct MediaRepository;
@@ -1204,6 +1204,381 @@ impl MediaRepository {
         }
         Ok(list)
     }
+
+    // --------------------------------------------------------------------------
+    // Facial Recognition & People Management
+    // --------------------------------------------------------------------------
+
+    pub fn insert_media_faces(
+        conn: &mut Connection,
+        media_id: i64,
+        faces: &[(crate::recognition::engine::DetectedFace, [f32; 128])],
+    ) -> Result<Vec<i64>> {
+        if faces.is_empty() {
+            return Ok(Vec::new());
+        }
+
+        let mut inserted_ids = Vec::with_capacity(faces.len());
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                r#"
+                INSERT INTO media_faces (
+                    media_id, bbox_x, bbox_y, bbox_w, bbox_h, confidence, embedding
+                ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7);
+                "#,
+            )?;
+
+            for (face, embedding) in faces {
+                let mut blob = Vec::with_capacity(512);
+                for f in embedding {
+                    blob.extend_from_slice(&f.to_le_bytes());
+                }
+
+                stmt.execute(params![
+                    media_id,
+                    face.bbox_x,
+                    face.bbox_y,
+                    face.bbox_w,
+                    face.bbox_h,
+                    face.confidence,
+                    blob,
+                ])?;
+                inserted_ids.push(tx.last_insert_rowid());
+            }
+        }
+        tx.commit()?;
+        Ok(inserted_ids)
+    }
+
+    pub fn get_unscanned_media_batch(conn: &Connection, limit: usize) -> Result<Vec<(i64, String)>> {
+        let mut stmt = conn.prepare_cached(
+            "SELECT id, file_path FROM media_files WHERE face_scanned = 0 AND media_type IN ('photo', 'raw') ORDER BY id ASC LIMIT ?1;"
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+
+        let mut items = Vec::new();
+        for r in rows {
+            items.push(r?);
+        }
+        Ok(items)
+    }
+
+    pub fn mark_media_face_scanned(conn: &mut Connection, media_ids: &[i64]) -> Result<()> {
+        if media_ids.is_empty() {
+            return Ok(());
+        }
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached("UPDATE media_files SET face_scanned = 1 WHERE id = ?1;")?;
+            for &id in media_ids {
+                let _ = stmt.execute(params![id]);
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn get_all_person_centroids(conn: &Connection) -> Result<Vec<crate::recognition::clustering::PersonCentroid>> {
+        let mut stmt = conn.prepare_cached(
+            "SELECT person_id, embedding FROM media_faces WHERE person_id IS NOT NULL;"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let pid: i64 = row.get(0)?;
+            let blob: Vec<u8> = row.get(1)?;
+            let mut emb = [0.0f32; 128];
+            for (i, chunk) in blob.chunks_exact(4).enumerate() {
+                if i < 128 {
+                    emb[i] = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                }
+            }
+            Ok((pid, emb))
+        })?;
+
+        use std::collections::HashMap;
+        let mut sum_map: HashMap<i64, ([f32; 128], usize)> = HashMap::new();
+        for r in rows {
+            let (pid, emb) = r?;
+            let entry = sum_map.entry(pid).or_insert(([0.0; 128], 0));
+            entry.1 += 1;
+            for i in 0..128 {
+                entry.0[i] += emb[i];
+            }
+        }
+
+        let mut centroids = Vec::new();
+        for (pid, (mut sum_vec, count)) in sum_map {
+            let norm = sum_vec.iter().map(|v| v * v).sum::<f32>().sqrt();
+            if norm > 1e-6 {
+                for v in sum_vec.iter_mut() {
+                    *v /= norm;
+                }
+            }
+            centroids.push(crate::recognition::clustering::PersonCentroid {
+                person_id: pid,
+                embedding: sum_vec,
+                face_count: count,
+            });
+        }
+
+        Ok(centroids)
+    }
+
+    pub fn assign_face_to_person(conn: &Connection, face_id: i64, person_id: i64) -> Result<()> {
+        conn.execute(
+            "UPDATE media_faces SET person_id = ?1 WHERE id = ?2;",
+            params![person_id, face_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn create_person_with_face(conn: &Connection, name: Option<&str>, cover_face_id: i64) -> Result<i64> {
+        conn.execute(
+            "INSERT INTO persons (name, cover_face_id) VALUES (?1, ?2);",
+            params![name, cover_face_id],
+        )?;
+        let pid = conn.last_insert_rowid();
+        conn.execute(
+            "UPDATE media_faces SET person_id = ?1 WHERE id = ?2;",
+            params![pid, cover_face_id],
+        )?;
+        Ok(pid)
+    }
+
+    pub fn get_unassigned_face_records(conn: &Connection, limit: usize) -> Result<Vec<crate::recognition::clustering::FaceRecord>> {
+        let mut stmt = conn.prepare_cached(
+            r#"
+            SELECT id, media_id, person_id, bbox_x, bbox_y, bbox_w, bbox_h, confidence, embedding
+            FROM media_faces
+            WHERE person_id IS NULL
+            ORDER BY id ASC
+            LIMIT ?1;
+            "#
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            let id: i64 = row.get(0)?;
+            let media_id: i64 = row.get(1)?;
+            let person_id: Option<i64> = row.get(2)?;
+            let bbox_x: f32 = row.get(3)?;
+            let bbox_y: f32 = row.get(4)?;
+            let bbox_w: f32 = row.get(5)?;
+            let bbox_h: f32 = row.get(6)?;
+            let confidence: f32 = row.get(7)?;
+            let blob: Vec<u8> = row.get(8)?;
+
+            let mut embedding = [0.0f32; 128];
+            for (i, chunk) in blob.chunks_exact(4).enumerate() {
+                if i < 128 {
+                    embedding[i] = f32::from_le_bytes([chunk[0], chunk[1], chunk[2], chunk[3]]);
+                }
+            }
+
+            Ok(crate::recognition::clustering::FaceRecord {
+                id,
+                media_id,
+                person_id,
+                bbox_x,
+                bbox_y,
+                bbox_w,
+                bbox_h,
+                confidence,
+                embedding,
+            })
+        })?;
+
+        let mut records = Vec::new();
+        for r in rows {
+            records.push(r?);
+        }
+        Ok(records)
+    }
+
+    pub fn query_people(conn: &Connection) -> Result<Vec<Person>> {
+        let mut stmt = conn.prepare_cached(
+            r#"
+            SELECT 
+                p.id, 
+                p.name, 
+                p.cover_face_id,
+                mf.media_id as cover_media_id,
+                mf_file.file_hash as cover_media_hash,
+                mf.bbox_x as cover_bbox_x,
+                mf.bbox_y as cover_bbox_y,
+                mf.bbox_w as cover_bbox_w,
+                mf.bbox_h as cover_bbox_h,
+                (SELECT COUNT(DISTINCT f.media_id) FROM media_faces f WHERE f.person_id = p.id) as face_count,
+                p.created_at
+            FROM persons p
+            LEFT JOIN media_faces mf ON p.cover_face_id = mf.id
+            LEFT JOIN media_files mf_file ON mf.media_id = mf_file.id
+            ORDER BY face_count DESC, p.id ASC;
+            "#
+        )?;
+
+        let rows = stmt.query_map([], |row| {
+            let count: i64 = row.get(9)?;
+            Ok(Person {
+                id: row.get(0)?,
+                name: row.get(1)?,
+                cover_face_id: row.get(2)?,
+                cover_media_id: row.get(3)?,
+                cover_media_hash: row.get(4)?,
+                cover_bbox_x: row.get(5)?,
+                cover_bbox_y: row.get(6)?,
+                cover_bbox_w: row.get(7)?,
+                cover_bbox_h: row.get(8)?,
+                face_count: count as usize,
+                created_at: row.get(10)?,
+            })
+        })?;
+
+        let mut people = Vec::new();
+        for r in rows {
+            people.push(r?);
+        }
+        Ok(people)
+    }
+
+    pub fn query_person_media(conn: &Connection, person_id: i64) -> Result<Vec<MediaItem>> {
+        let mut stmt = conn.prepare_cached(
+            r#"
+            SELECT DISTINCT m.id, m.library_id, m.file_path, m.directory, m.file_name, m.file_size,
+                   m.file_modified_at, m.file_hash, m.mime_type, m.media_type,
+                   m.width, m.height, m.duration, m.orientation,
+                   m.captured_at, m.captured_at_local, m.timezone_offset,
+                   m.latitude, m.longitude, m.altitude, m.geohash,
+                   m.camera_make, m.camera_model, m.lens_model, m.focal_length, m.aperture, m.iso, m.exposure_time,
+                   m.thumbnail_path, m.thumbnail_status, m.indexed_at, m.updated_at,
+                   m.is_favorite, m.rating
+            FROM media_files m
+            JOIN media_faces mf ON m.id = mf.media_id
+            WHERE mf.person_id = ?1
+            ORDER BY COALESCE(m.captured_at, m.file_modified_at) DESC;
+            "#
+        )?;
+
+        let rows = stmt.query_map(params![person_id], |row| Self::row_to_media_item(row))?;
+        let mut items = Vec::new();
+        for r in rows {
+            items.push(r?);
+        }
+        Ok(items)
+    }
+
+    pub fn update_person_name(conn: &Connection, person_id: i64, name: Option<String>) -> Result<()> {
+        conn.execute(
+            "UPDATE persons SET name = ?1 WHERE id = ?2;",
+            params![name, person_id],
+        )?;
+        Ok(())
+    }
+
+    pub fn merge_people(conn: &mut Connection, target_person_id: i64, source_person_ids: &[i64]) -> Result<()> {
+        if source_person_ids.is_empty() {
+            return Ok(());
+        }
+        let tx = conn.transaction()?;
+        {
+            let mut update_stmt = tx.prepare_cached(
+                "UPDATE media_faces SET person_id = ?1 WHERE person_id = ?2;"
+            )?;
+            let mut delete_stmt = tx.prepare_cached(
+                "DELETE FROM persons WHERE id = ?1;"
+            )?;
+
+            for &src_id in source_person_ids {
+                if src_id != target_person_id {
+                    update_stmt.execute(params![target_person_id, src_id])?;
+                    delete_stmt.execute(params![src_id])?;
+                }
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    pub fn get_media_faces(conn: &Connection, media_id: i64) -> Result<Vec<MediaFace>> {
+        let mut stmt = conn.prepare_cached(
+            r#"
+            SELECT mf.id, mf.media_id, mf.person_id, p.name,
+                   mf.bbox_x, mf.bbox_y, mf.bbox_w, mf.bbox_h, mf.confidence
+            FROM media_faces mf
+            LEFT JOIN persons p ON mf.person_id = p.id
+            WHERE mf.media_id = ?1;
+            "#
+        )?;
+
+        let rows = stmt.query_map(params![media_id], |row| {
+            Ok(MediaFace {
+                id: row.get(0)?,
+                media_id: row.get(1)?,
+                person_id: row.get(2)?,
+                person_name: row.get(3)?,
+                bbox_x: row.get(4)?,
+                bbox_y: row.get(5)?,
+                bbox_w: row.get(6)?,
+                bbox_h: row.get(7)?,
+                confidence: row.get(8)?,
+            })
+        })?;
+
+        let mut faces = Vec::new();
+        for r in rows {
+            faces.push(r?);
+        }
+        Ok(faces)
+    }
+
+    pub fn get_face_crop_by_id(conn: &Connection, face_id: i64) -> Result<Option<(String, f32, f32, f32, f32)>> {
+        let mut stmt = conn.prepare_cached(
+            r#"
+            SELECT mf_file.file_path, mf.bbox_x, mf.bbox_y, mf.bbox_w, mf.bbox_h
+            FROM media_faces mf
+            JOIN media_files mf_file ON mf.media_id = mf_file.id
+            WHERE mf.id = ?1
+            LIMIT 1;
+            "#
+        )?;
+
+        let mut rows = stmt.query_map(params![face_id], |row| {
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+        })?;
+
+        match rows.next() {
+            Some(res) => Ok(Some(res?)),
+            None => Ok(None),
+        }
+    }
+
+    pub fn get_face_scan_stats(conn: &Connection) -> Result<(i64, i64, i64, i64)> {
+        let total_scannable: i64 = conn.query_row(
+            "SELECT count(*) FROM media_files WHERE media_type IN ('photo', 'raw');",
+            [],
+            |r| r.get(0),
+        ).unwrap_or(0);
+
+        let total_scanned: i64 = conn.query_row(
+            "SELECT count(*) FROM media_files WHERE face_scanned = 1 AND media_type IN ('photo', 'raw');",
+            [],
+            |r| r.get(0),
+        ).unwrap_or(0);
+
+        let total_faces: i64 = conn.query_row(
+            "SELECT count(*) FROM media_faces;",
+            [],
+            |r| r.get(0),
+        ).unwrap_or(0);
+
+        let total_people: i64 = conn.query_row(
+            "SELECT count(*) FROM persons;",
+            [],
+            |r| r.get(0),
+        ).unwrap_or(0);
+
+        Ok((total_scannable, total_scanned, total_faces, total_people))
+    }
 }
 
 #[cfg(test)]
@@ -1752,6 +2127,61 @@ mod tests {
         }).unwrap();
         assert_eq!(ar_matches.len(), 1);
         assert_eq!(ar_matches[0].file_name, "IMG_003.jpg");
+    }
+
+    #[test]
+    fn test_people_and_face_clustering_db_operations() {
+        let mut conn = setup_test_db();
+        let item1 = create_test_item(1, "alice1.jpg", "h_a1", None, None, Some(1720000000000), "photo");
+        let item2 = create_test_item(2, "alice2.jpg", "h_a2", None, None, Some(1720000001000), "photo");
+        let item3 = create_test_item(3, "bob.jpg", "h_b", None, None, Some(1720000002000), "photo");
+        MediaRepository::insert_batch(&mut conn, &[item1, item2, item3]).unwrap();
+
+        let m1_id = 1;
+        let m2_id = 2;
+        let m3_id = 3;
+
+        let face1 = crate::recognition::engine::DetectedFace {
+            bbox_x: 0.2, bbox_y: 0.2, bbox_w: 0.3, bbox_h: 0.3, confidence: 0.95,
+        };
+        let mut emb1 = [0.0f32; 128];
+        emb1[0] = 1.0;
+
+        let ids1 = MediaRepository::insert_media_faces(&mut conn, m1_id, &[(face1.clone(), emb1)]).unwrap();
+        assert_eq!(ids1.len(), 1);
+        let f1_id = ids1[0];
+
+        // Create person for face 1
+        let p_alice = MediaRepository::create_person_with_face(&conn, Some("Alice"), f1_id).unwrap();
+
+        // Insert face 2 and assign to Alice
+        let ids2 = MediaRepository::insert_media_faces(&mut conn, m2_id, &[(face1.clone(), emb1)]).unwrap();
+        MediaRepository::assign_face_to_person(&conn, ids2[0], p_alice).unwrap();
+
+        // Insert face 3 and create Bob
+        let mut emb2 = [0.0f32; 128];
+        emb2[1] = 1.0;
+        let ids3 = MediaRepository::insert_media_faces(&mut conn, m3_id, &[(face1.clone(), emb2)]).unwrap();
+        let p_bob = MediaRepository::create_person_with_face(&conn, Some("Bob"), ids3[0]).unwrap();
+
+        // Query people
+        let people = MediaRepository::query_people(&conn).unwrap();
+        assert_eq!(people.len(), 2);
+        assert_eq!(people[0].name.as_deref(), Some("Alice"));
+        assert_eq!(people[0].face_count, 2);
+        assert_eq!(people[1].name.as_deref(), Some("Bob"));
+        assert_eq!(people[1].face_count, 1);
+
+        // Query person media
+        let alice_media = MediaRepository::query_person_media(&conn, p_alice).unwrap();
+        assert_eq!(alice_media.len(), 2);
+
+        // Test merge people
+        MediaRepository::merge_people(&mut conn, p_alice, &[p_bob]).unwrap();
+        let people_after_merge = MediaRepository::query_people(&conn).unwrap();
+        assert_eq!(people_after_merge.len(), 1);
+        assert_eq!(people_after_merge[0].name.as_deref(), Some("Alice"));
+        assert_eq!(people_after_merge[0].face_count, 3);
     }
 }
 

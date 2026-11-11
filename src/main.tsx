@@ -10,6 +10,8 @@ if (typeof window !== 'undefined') {
   window.addEventListener('error', (event) => {
     // Ignore resource load events on <img>/<video> elements (handled gracefully by MediaThumbnail/Lightbox)
     if (event.target && event.target !== window) return;
+    // Ignore benign WebView2/Chromium layout notification during virtualized container resize
+    if (typeof event.message === 'string' && event.message.includes('ResizeObserver loop')) return;
     const msg = event.error?.stack || `${event.message} (${event.filename}:${event.lineno}:${event.colno})`;
     tauriApi.logFrontendEvent('error', 'window.onerror', msg);
   });

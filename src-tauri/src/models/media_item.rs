@@ -151,3 +151,31 @@ pub struct LibraryStats {
     pub total_tags: i64,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct Person {
+    pub id: i64,
+    pub name: Option<String>,
+    pub cover_face_id: Option<i64>,
+    pub cover_media_id: Option<i64>,
+    pub cover_media_hash: Option<String>,
+    pub cover_bbox_x: Option<f32>,
+    pub cover_bbox_y: Option<f32>,
+    pub cover_bbox_w: Option<f32>,
+    pub cover_bbox_h: Option<f32>,
+    pub face_count: usize,
+    pub created_at: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MediaFace {
+    pub id: i64,
+    pub media_id: i64,
+    pub person_id: Option<i64>,
+    pub person_name: Option<String>,
+    pub bbox_x: f32,
+    pub bbox_y: f32,
+    pub bbox_w: f32,
+    pub bbox_h: f32,
+    pub confidence: f32,
+}
+

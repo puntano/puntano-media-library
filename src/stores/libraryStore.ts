@@ -2,7 +2,7 @@ import { create } from 'zustand';
 import { IndexingProgressEvent, MapFocusTarget, MediaItem } from '../types/media';
 
 interface LibraryState {
-  activeView: 'map' | 'timeline' | 'gallery' | 'albums';
+  activeView: 'map' | 'timeline' | 'gallery' | 'albums' | 'people';
   totalMediaCount: number;
   isIndexing: boolean;
   indexingProgress: IndexingProgressEvent | null;
@@ -42,7 +42,7 @@ interface LibraryState {
   // Map Fly-To Target (set by "View on Map" in MetadataDrawer)
   mapFocusTarget: MapFocusTarget | null;
 
-  setActiveView: (view: 'map' | 'timeline' | 'gallery' | 'albums') => void;
+  setActiveView: (view: 'map' | 'timeline' | 'gallery' | 'albums' | 'people') => void;
   setTotalMediaCount: (count: number) => void;
   setIsIndexing: (isIndexing: boolean) => void;
   setIndexingProgress: (progress: IndexingProgressEvent | null) => void;

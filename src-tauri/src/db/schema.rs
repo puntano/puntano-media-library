@@ -60,7 +60,10 @@ CREATE TABLE IF NOT EXISTS media_files (
 
     -- User Curation: Favorites & Star Ratings
     is_favorite INTEGER NOT NULL DEFAULT 0,
-    rating INTEGER NOT NULL DEFAULT 0
+    rating INTEGER NOT NULL DEFAULT 0,
+
+    -- Facial Recognition
+    face_scanned INTEGER NOT NULL DEFAULT 0
 );
 
 -- R*Tree Spatial Virtual Table
@@ -97,6 +100,27 @@ CREATE TABLE IF NOT EXISTS media_tags (
     media_id INTEGER NOT NULL REFERENCES media_files(id) ON DELETE CASCADE,
     tag_id INTEGER NOT NULL REFERENCES tags(id) ON DELETE CASCADE,
     PRIMARY KEY (media_id, tag_id)
+);
+
+-- Persons & Facial Recognition
+CREATE TABLE IF NOT EXISTS persons (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    name TEXT,
+    cover_face_id INTEGER,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
+);
+
+CREATE TABLE IF NOT EXISTS media_faces (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    media_id INTEGER NOT NULL REFERENCES media_files(id) ON DELETE CASCADE,
+    person_id INTEGER REFERENCES persons(id) ON DELETE SET NULL,
+    bbox_x REAL NOT NULL,
+    bbox_y REAL NOT NULL,
+    bbox_w REAL NOT NULL,
+    bbox_h REAL NOT NULL,
+    confidence REAL NOT NULL,
+    embedding BLOB NOT NULL,
+    created_at TEXT NOT NULL DEFAULT (strftime('%Y-%m-%dT%H:%M:%fZ', 'now'))
 );
 "#
     };
@@ -174,6 +198,12 @@ ON media_tags(media_id);
 
 CREATE INDEX IF NOT EXISTS idx_media_tags_tag 
 ON media_tags(tag_id);
+
+CREATE INDEX IF NOT EXISTS idx_media_faces_media_id 
+ON media_faces(media_id);
+
+CREATE INDEX IF NOT EXISTS idx_media_faces_person_id 
+ON media_faces(person_id);
 
 -- High-Performance Composite & Expression Indexes for Sub-Millisecond Sorting
 CREATE INDEX IF NOT EXISTS idx_media_timeline_order 

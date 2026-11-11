@@ -15,6 +15,7 @@ const SHORTCUT_GROUPS: ShortcutGroup[] = [
       { keys: ['2'], description: 'Switch to Timeline View' },
       { keys: ['3'], description: 'Switch to Gallery View' },
       { keys: ['4'], description: 'Switch to Albums View' },
+      { keys: ['5'], description: 'Switch to People View' },
       { keys: ['?'], description: 'Toggle this Shortcuts reference' },
       { keys: ['Esc'], description: 'Close modal, drawer, or lightbox' },
     ],

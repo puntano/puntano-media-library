@@ -18,6 +18,7 @@ pub struct AppState {
     /// Tracks file hashes whose thumbnail generation failed in the current session.
     pub failed_hashes: Arc<std::sync::RwLock<std::collections::HashSet<String>>>,
     pub watcher_tx: std::sync::Mutex<std::sync::mpsc::Sender<crate::indexer::WatcherCommand>>,
+    pub face_worker: Arc<crate::recognition::worker::FaceScanWorker>,
 }
 
 struct IndexingActiveGuard(Arc<AtomicBool>);

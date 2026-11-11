@@ -77,6 +77,12 @@ impl DatabaseManager {
                 [],
             )?;
         }
+        if !Self::table_has_column(conn, "media_files", "face_scanned")? {
+            conn.execute(
+                "ALTER TABLE media_files ADD COLUMN face_scanned INTEGER NOT NULL DEFAULT 0;",
+                [],
+            )?;
+        }
         Ok(())
     }
 
@@ -261,6 +267,9 @@ mod tests {
         // Verify albums and tags tables were created
         assert!(DatabaseManager::table_has_column(&conn, "albums", "name").unwrap());
         assert!(DatabaseManager::table_has_column(&conn, "tags", "name").unwrap());
+        assert!(DatabaseManager::table_has_column(&conn, "persons", "name").unwrap());
+        assert!(DatabaseManager::table_has_column(&conn, "media_faces", "embedding").unwrap());
+        assert!(DatabaseManager::table_has_column(&conn, "media_files", "face_scanned").unwrap());
 
         // Verify idempotence: calling apply_migrations again should succeed
         DatabaseManager::apply_migrations(&conn)
