@@ -7,6 +7,7 @@ import {
   IndexingProgressEvent,
   LibraryInfo,
   DuplicateGroup,
+  MemoryGroup,
   Album,
   Tag,
   LibraryStats,
@@ -226,7 +227,7 @@ export const tauriApi = {
   },
 
   // Duplicates Management
-  async queryDuplicateGroups(): Promise<DuplicateGroup[]> {
+  async queryDuplicateGroups(minSizeBytes?: number, mediaType?: string): Promise<DuplicateGroup[]> {
     if (!isTauri()) {
       return [
         {
@@ -276,7 +277,20 @@ export const tauriApi = {
         },
       ];
     }
-    return await invoke<DuplicateGroup[]>('query_duplicate_groups');
+    return await invoke<DuplicateGroup[]>('query_duplicate_groups', {
+      minSizeBytes: minSizeBytes ?? null,
+      mediaType: mediaType ?? null,
+    });
+  },
+
+  async queryOnThisDayMemories(month?: number, day?: number): Promise<MemoryGroup[]> {
+    if (!isTauri()) {
+      return [];
+    }
+    return await invoke<MemoryGroup[]>('query_on_this_day_memories', {
+      month: month ?? null,
+      day: day ?? null,
+    });
   },
 
   async deleteMediaFile(id: number, deleteFromDisk: boolean = false): Promise<string | null> {

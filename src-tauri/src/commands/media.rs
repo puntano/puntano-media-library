@@ -3,8 +3,8 @@ use tauri::State;
 use super::indexing::AppState;
 use crate::db::{DatabaseManager, MediaRepository};
 use crate::models::{
-    Album, DuplicateGroup, LibraryStats, MediaFilterQuery, MediaItem, SpatialBoundingBox, SpatialClusterPoint,
-    Tag, TimelineGroup,
+    Album, DuplicateGroup, LibraryStats, MediaFilterQuery, MediaItem, MemoryGroup,
+    SpatialBoundingBox, SpatialClusterPoint, Tag, TimelineGroup,
 };
 
 #[tauri::command]
@@ -89,10 +89,28 @@ pub fn get_media_item(
 #[tauri::command]
 pub fn query_duplicate_groups(
     state: State<'_, AppState>,
+    min_size_bytes: Option<i64>,
+    media_type: Option<String>,
 ) -> Result<Vec<DuplicateGroup>, String> {
     let conn = DatabaseManager::open(&state.db_path)
         .map_err(|e| format!("Failed to open DB: {}", e))?;
-    MediaRepository::query_duplicate_groups(&conn).map_err(|e| e.to_string())
+    MediaRepository::query_duplicate_groups_filtered(
+        &conn,
+        min_size_bytes,
+        media_type.as_deref(),
+    )
+    .map_err(|e| e.to_string())
+}
+
+#[tauri::command]
+pub fn query_on_this_day_memories(
+    state: State<'_, AppState>,
+    month: Option<u32>,
+    day: Option<u32>,
+) -> Result<Vec<MemoryGroup>, String> {
+    let conn = DatabaseManager::open(&state.db_path)
+        .map_err(|e| format!("Failed to open DB: {}", e))?;
+    MediaRepository::query_on_this_day_memories(&conn, month, day).map_err(|e| e.to_string())
 }
 
 #[tauri::command]

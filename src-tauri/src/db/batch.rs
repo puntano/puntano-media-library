@@ -1,7 +1,8 @@
+use chrono::Datelike;
 use rusqlite::{params, Connection, OptionalExtension, Result};
 use crate::models::{
-    Album, DuplicateGroup, LibraryStats, MediaFilterQuery, MediaItem, SpatialBoundingBox, SpatialClusterPoint,
-    Tag, TimelineGroup,
+    Album, DuplicateGroup, LibraryStats, MediaFilterQuery, MediaItem, MemoryGroup,
+    SpatialBoundingBox, SpatialClusterPoint, Tag, TimelineGroup,
 };
 
 pub struct MediaRepository;
@@ -647,27 +648,17 @@ impl MediaRepository {
 
     /// Queries all clusters of exact duplicate media files grouped by hash
     pub fn query_duplicate_groups(conn: &Connection) -> Result<Vec<DuplicateGroup>> {
-        let mut group_stmt = conn.prepare_cached(
-            r#"
-            SELECT file_hash, count(*) as cnt, sum(file_size) as total_size
-            FROM media_files
-            GROUP BY file_hash
-            HAVING count(*) > 1
-            ORDER BY count(*) DESC, sum(file_size) DESC
-            LIMIT 100;
-            "#,
-        )?;
+        Self::query_duplicate_groups_filtered(conn, None, None)
+    }
 
-        let group_rows = group_stmt.query_map([], |row| {
-            Ok((
-                row.get::<_, String>(0)?,
-                row.get::<_, i64>(1)?,
-                row.get::<_, i64>(2)?,
-            ))
-        })?;
-
-        let mut item_stmt = conn.prepare_cached(
-            r#"
+    /// Queries clusters of exact duplicate media files with optional size and type filters.
+    /// Uses high-performance single-pass SQL batching without N+1 queries.
+    pub fn query_duplicate_groups_filtered(
+        conn: &Connection,
+        min_size_bytes: Option<i64>,
+        media_type: Option<&str>,
+    ) -> Result<Vec<DuplicateGroup>> {
+        let sql = r#"
             SELECT 
                 id, library_id, file_path, directory, file_name, file_size,
                 file_modified_at, file_hash, mime_type, media_type,
@@ -678,27 +669,130 @@ impl MediaRepository {
                 thumbnail_path, thumbnail_status, indexed_at, updated_at,
                 is_favorite, rating
             FROM media_files
-            WHERE file_hash = ?1
-            ORDER BY id ASC;
-            "#,
-        )?;
+            WHERE file_hash IN (
+                SELECT file_hash
+                FROM media_files
+                WHERE (?1 IS NULL OR file_size >= ?1)
+                  AND (?2 IS NULL OR media_type = ?2)
+                GROUP BY file_hash
+                HAVING count(*) > 1
+            )
+            ORDER BY file_size DESC, file_hash ASC, id ASC;
+        "#;
 
-        let mut groups = Vec::new();
-        for grow in group_rows {
-            let (hash, count, total_size) = grow?;
-            let items = item_stmt
-                .query_map(params![hash], |row| Self::row_to_media_item(row))?
-                .collect::<Result<Vec<_>, _>>()?;
+        let mut stmt = conn.prepare_cached(sql)?;
+        let rows = stmt.query_map(params![min_size_bytes, media_type], |row| {
+            Self::row_to_media_item(row)
+        })?;
 
+        let mut groups: Vec<DuplicateGroup> = Vec::new();
+        for item_res in rows {
+            let item = item_res?;
+            if let Some(last_group) = groups.last_mut() {
+                if last_group.file_hash == item.file_hash {
+                    last_group.total_size_bytes += item.file_size;
+                    last_group.count += 1;
+                    last_group.items.push(item);
+                    continue;
+                }
+            }
+
+            let file_hash = item.file_hash.clone();
+            let file_size = item.file_size;
             groups.push(DuplicateGroup {
-                file_hash: hash,
-                count,
-                total_size_bytes: total_size,
-                items,
+                file_hash,
+                count: 1,
+                total_size_bytes: file_size,
+                items: vec![item],
             });
         }
 
+        // Retain only groups with >1 item
+        groups.retain(|g| g.count > 1);
+
+        // Sort by total duplicate size descending (greatest space saving opportunities first)
+        groups.sort_by(|a, b| b.total_size_bytes.cmp(&a.total_size_bytes));
+
         Ok(groups)
+    }
+
+    // --------------------------------------------------------------------------
+    // "On This Day" / Memories
+    // --------------------------------------------------------------------------
+
+    /// Queries photos and videos taken on "this day" in previous years (Memories / On This Day).
+    /// If month and day are None, uses the current UTC month and day.
+    pub fn query_on_this_day_memories(
+        conn: &Connection,
+        month: Option<u32>,
+        day: Option<u32>,
+    ) -> Result<Vec<MemoryGroup>> {
+        let now = chrono::Utc::now();
+        let current_year = now.year();
+        let target_month = month.unwrap_or_else(|| now.month());
+        let target_day = day.unwrap_or_else(|| now.day());
+
+        let date_pattern = format!("{:02}-{:02}", target_month, target_day);
+
+        let sql = r#"
+            SELECT 
+                id, library_id, file_path, directory, file_name, file_size,
+                file_modified_at, file_hash, mime_type, media_type,
+                width, height, duration, orientation,
+                captured_at, captured_at_local, timezone_offset,
+                latitude, longitude, altitude, geohash,
+                camera_make, camera_model, lens_model, focal_length, aperture, iso, exposure_time,
+                thumbnail_path, thumbnail_status, indexed_at, updated_at,
+                is_favorite, rating
+            FROM media_files
+            WHERE captured_at IS NOT NULL
+              AND strftime('%m-%d', datetime(captured_at / 1000, 'unixepoch')) = ?1
+            ORDER BY captured_at DESC, id ASC;
+        "#;
+
+        let mut stmt = conn.prepare_cached(sql)?;
+        let rows = stmt.query_map(params![date_pattern], |row| {
+            Self::row_to_media_item(row)
+        })?;
+
+        use std::collections::BTreeMap;
+        let mut by_year: BTreeMap<i32, Vec<MediaItem>> = BTreeMap::new();
+
+        for item_res in rows {
+            let item = item_res?;
+            if let Some(ts) = item.captured_at {
+                if let Some(dt) = chrono::DateTime::from_timestamp_millis(ts) {
+                    let yr = dt.year();
+                    if yr < current_year {
+                        by_year.entry(yr).or_default().push(item);
+                    }
+                }
+            }
+        }
+
+        let mut memories = Vec::new();
+        // Traverse years in descending order (most recent anniversary first)
+        for (&year, items) in by_year.iter().rev() {
+            if items.is_empty() {
+                continue;
+            }
+            let years_ago = current_year - year;
+            let cover_item = items
+                .iter()
+                .find(|i| i.is_favorite)
+                .cloned()
+                .unwrap_or_else(|| items[0].clone());
+
+            memories.push(MemoryGroup {
+                year,
+                years_ago,
+                count: items.len() as i64,
+                cover_item,
+                items: items.clone(),
+            });
+        }
+
+        Ok(memories)
     }
 
     /// Moves a file to the OS Recycle Bin / Trash, falling back to direct removal if Trash is unavailable.
@@ -1299,6 +1393,32 @@ mod tests {
 
         let dupes_after = MediaRepository::query_duplicate_groups(&conn).unwrap();
         assert_eq!(dupes_after[0].count, 2);
+    }
+
+    #[test]
+    fn test_on_this_day_memories() {
+        let mut conn = setup_test_db();
+        // 2023-11-11 12:00:00 UTC = 1699704000000 ms
+        let ts_2023 = 1699704000000_i64;
+        // 2022-11-11 12:00:00 UTC = 1668168000000 ms
+        let ts_2022 = 1668168000000_i64;
+        // 2023-05-01 (different day)
+        let ts_other = 1682942400000_i64;
+
+        let items = vec![
+            create_test_item(1, "photo_2023.jpg", "hash_mem_1", None, None, Some(ts_2023), "photo"),
+            create_test_item(2, "photo_2022.jpg", "hash_mem_2", None, None, Some(ts_2022), "photo"),
+            create_test_item(3, "photo_other.jpg", "hash_mem_3", None, None, Some(ts_other), "photo"),
+        ];
+
+        MediaRepository::insert_batch(&mut conn, &items).unwrap();
+
+        let memories = MediaRepository::query_on_this_day_memories(&conn, Some(11), Some(11)).unwrap();
+        assert_eq!(memories.len(), 2, "Should find memories from 2 previous years");
+        assert_eq!(memories[0].year, 2023);
+        assert_eq!(memories[0].count, 1);
+        assert_eq!(memories[1].year, 2022);
+        assert_eq!(memories[1].count, 1);
     }
 
     #[test]

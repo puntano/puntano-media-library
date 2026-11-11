@@ -26,6 +26,7 @@ import { MediaItem, MediaFilterQuery, Tag } from '../../types/media';
 import { useLibraryStore } from '../../stores/libraryStore';
 import { MediaThumbnail } from '../common/MediaThumbnail';
 import { AddToAlbumModal } from '../albums/AddToAlbumModal';
+import { MemoriesBanner } from './MemoriesBanner';
 
 const PAGE_SIZE = 100;
 
@@ -461,6 +462,9 @@ export const VirtualGallery: React.FC = () => {
         position: 'relative',
       }}
     >
+      {/* On This Day Memories Banner */}
+      <MemoriesBanner />
+
       {/* Top Toolbar: Density & Selection Controls */}
       <div
         style={{

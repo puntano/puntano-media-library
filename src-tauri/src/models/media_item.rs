@@ -60,6 +60,15 @@ pub struct DuplicateGroup {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MemoryGroup {
+    pub year: i32,
+    pub years_ago: i32,
+    pub count: i64,
+    pub cover_item: MediaItem,
+    pub items: Vec<MediaItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Album {
     pub id: i64,
     pub name: String,

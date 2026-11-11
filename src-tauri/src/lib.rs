@@ -311,6 +311,7 @@ pub fn run() {
             commands::media::search_media,
             commands::media::get_media_item,
             commands::media::query_duplicate_groups,
+            commands::media::query_on_this_day_memories,
             commands::media::delete_media_file,
             commands::media::set_media_favorite,
             commands::media::set_media_rating,

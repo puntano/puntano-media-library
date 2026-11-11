@@ -50,6 +50,14 @@ export interface DuplicateGroup {
   items: MediaItem[];
 }
 
+export interface MemoryGroup {
+  year: number;
+  years_ago: number;
+  count: number;
+  cover_item: MediaItem;
+  items: MediaItem[];
+}
+
 export interface Album {
   id: number;
   name: string;
