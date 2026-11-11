@@ -230,34 +230,106 @@ pub fn extract_date_from_filename(filename: &str) -> Option<(i64, String)> {
         }
     }
 
+    // 7. Unix millisecond epoch timestamps (13 digits starting with 1, e.g. FB_IMG_1426625621638, 1388427113062)
+    static RE_EPOCH_MS: OnceLock<Regex> = OnceLock::new();
+    let re_epoch_ms = RE_EPOCH_MS.get_or_init(|| {
+        Regex::new(r"(?:^|[^\d])(1[2-7]\d{11})(?:[^\d]|$)").expect("Valid regex")
+    });
+    if let Some(caps) = re_epoch_ms.captures(filename) {
+        if let Ok(ms) = caps[1].parse::<i64>() {
+            let secs = ms / 1000;
+            if let Some(dt) = chrono::DateTime::from_timestamp(secs, 0) {
+                let year = dt.year();
+                let current_year = Utc::now().year();
+                if (2000..=current_year).contains(&year) {
+                    return Some((ms, dt.naive_utc().to_string()));
+                }
+            }
+        }
+    }
+
+    // 8. Note DDMMYY_HHMMSS (e.g. Note_261213_194757)
+    static RE_NOTE: OnceLock<Regex> = OnceLock::new();
+    let re_note = RE_NOTE.get_or_init(|| {
+        Regex::new(r"Note_(\d{2})(\d{2})(\d{2})_(\d{2})(\d{2})(\d{2})").expect("Valid regex")
+    });
+    if let Some(caps) = re_note.captures(filename) {
+        if let (Ok(d), Ok(m), Ok(yy), Ok(h), Ok(min), Ok(s)) = (
+            caps[1].parse::<u32>(),
+            caps[2].parse::<u32>(),
+            caps[3].parse::<i32>(),
+            caps[4].parse::<u32>(),
+            caps[5].parse::<u32>(),
+            caps[6].parse::<u32>(),
+        ) {
+            let y = 2000 + yy;
+            if let Some(res) = validate_and_build(y, m, d, h, min, s) {
+                return Some(res);
+            }
+        }
+    }
+
     None
 }
 
-/// Parses Google Photos Takeout metadata JSON sidecar if present (`<media_path>.json` or `<stem>.json`).
+/// Parses Google Photos Takeout metadata JSON sidecar if present.
+/// Supports standard `<media_path>.json`, `<stem>.json`, Google Takeout duplicate naming
+/// `<name>.<ext>(1).json` for `<name>(1).<ext>`, and `-edited` suffixes.
 pub fn try_parse_google_takeout_sidecar<P: AsRef<Path>>(media_path: P) -> Option<(i64, String)> {
     use std::fs::File;
     use std::io::Read;
     use std::path::PathBuf;
 
     let path = media_path.as_ref();
-    let candidate = PathBuf::from(format!("{}.json", path.to_string_lossy()));
-    let json_path = if candidate.exists() {
-        candidate
-    } else {
-        let stem_candidate = path.with_extension("json");
-        if stem_candidate.exists() && stem_candidate != path {
-            stem_candidate
-        } else {
-            return None;
+    let parent = path.parent()?;
+    let filename = path.file_name()?.to_str()?;
+
+    let mut candidates: Vec<PathBuf> = Vec::with_capacity(6);
+    // 1. Exact: file.ext.json
+    candidates.push(parent.join(format!("{}.json", filename)));
+    // 2. Stem: file.json
+    candidates.push(path.with_extension("json"));
+
+    // 3. Google Takeout duplicate format: file(1).ext -> file.ext(1).json & file(1).ext.json
+    static RE_DUP: OnceLock<Regex> = OnceLock::new();
+    let re_dup = RE_DUP.get_or_init(|| {
+        Regex::new(r"^(.*?)\((\d+)\)\.([a-zA-Z0-9]+)$").expect("Valid regex")
+    });
+    if let Some(caps) = re_dup.captures(filename) {
+        let base = &caps[1];
+        let num = &caps[2];
+        let ext = &caps[3];
+        candidates.push(parent.join(format!("{}.{}({}).json", base, ext, num)));
+        candidates.push(parent.join(format!("{}({}).{}.json", base, num, ext)));
+    }
+
+    // 4. Google Takeout edited format: file-edited.ext -> file.ext.json & file.json
+    if filename.contains("-edited") {
+        let clean = filename.replace("-edited", "");
+        candidates.push(parent.join(format!("{}.json", clean)));
+        if let Some(clean_stem) = Path::new(&clean).file_stem().and_then(|s| s.to_str()) {
+            candidates.push(parent.join(format!("{}.json", clean_stem)));
+            if let Some(clean_ext) = Path::new(&clean).extension().and_then(|s| s.to_str()) {
+                candidates.push(parent.join(format!("{}.{}.json", clean_stem, clean_ext)));
+            }
         }
-    };
+    }
+
+    let json_path = candidates.into_iter().find(|p| p.exists() && p != path)?;
 
     let mut file = File::open(&json_path).ok()?;
     let mut contents = String::new();
     file.read_to_string(&mut contents).ok()?;
 
     let v: serde_json::Value = serde_json::from_str(&contents).ok()?;
-    let ts_str = v.get("photoTakenTime")?.get("timestamp")?.as_str()?;
+    let ts_str = v.get("photoTakenTime")
+        .and_then(|t| t.get("timestamp"))
+        .and_then(|ts| ts.as_str())
+        .or_else(|| {
+            v.get("creationTime")
+                .and_then(|t| t.get("timestamp"))
+                .and_then(|ts| ts.as_str())
+        })?;
     let secs = ts_str.parse::<i64>().ok()?;
     let ms = secs * 1000;
 
