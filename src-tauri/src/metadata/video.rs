@@ -1,8 +1,9 @@
 use std::fs::File;
 use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
-use chrono::NaiveDateTime;
 use nom_exif::{EntryValue, MediaParser, MediaSource, TrackInfo, TrackInfoTag};
+
+use crate::metadata::{extract_date_from_filename, parse_tolerant_date_str};
 
 #[derive(Default, Debug)]
 pub struct ExtractedVideoMetadata {
@@ -30,10 +31,28 @@ impl VideoMetadataParser {
             }
         }
 
-        // Fallback: If nom-exif didn't catch ISO 6709 location or mvhd creation date, scan QuickTime atoms
+        // Fallback 1: If nom-exif didn't catch ISO 6709 location or mvhd creation date, scan QuickTime atoms
         if meta.captured_at.is_none() || meta.latitude.is_none() {
             if let Ok(mut f) = File::open(path.as_ref()) {
                 Self::scan_quicktime_atoms(&mut f, &mut meta);
+            }
+        }
+
+        // Fallback 2: If captured_at is still missing, extract date from filename
+        if meta.captured_at.is_none() {
+            if let Some(filename) = path.as_ref().file_name().and_then(|s| s.to_str()) {
+                if let Some((ts, local)) = extract_date_from_filename(filename) {
+                    meta.captured_at = Some(ts);
+                    meta.captured_at_local = Some(local);
+                }
+            }
+        }
+
+        // Fallback 3: Check for Google Takeout JSON sidecar
+        if meta.captured_at.is_none() {
+            if let Some((ts, local)) = crate::metadata::photo::try_parse_google_takeout_sidecar(path.as_ref()) {
+                meta.captured_at = Some(ts);
+                meta.captured_at_local = Some(local);
             }
         }
 
@@ -62,9 +81,13 @@ impl VideoMetadataParser {
                     meta.captured_at = Some(ndt.and_utc().timestamp_millis());
                 }
                 EntryValue::Text(s) => {
-                    meta.captured_at_local = Some(s.clone());
-                    if let Ok(ndt) = NaiveDateTime::parse_from_str(s, "%Y:%m:%d %H:%M:%S") {
-                        meta.captured_at = Some(ndt.and_utc().timestamp_millis());
+                    if let Some((ts, local)) = parse_tolerant_date_str(s) {
+                        meta.captured_at = Some(ts);
+                        meta.captured_at_local = Some(local);
+                    } else {
+                        meta.captured_at_local = Some(
+                            s.trim_matches(|c: char| c.is_whitespace() || c == '\0').to_string(),
+                        );
                     }
                 }
                 _ => {}

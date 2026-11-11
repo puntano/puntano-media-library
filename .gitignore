@@ -41,4 +41,6 @@ err.txt
 .env.*
 !.env.example
 *.key
+*.key.pub
 *.sig
+src-tauri/*.key*

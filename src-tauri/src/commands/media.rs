@@ -31,7 +31,7 @@ pub fn query_spatial_bounding_box(
     MediaRepository::query_by_bounding_box_filtered(
         &conn,
         &bbox,
-        limit.unwrap_or(20000),
+        limit.unwrap_or(100000),
         album_id,
         tag_id,
     )

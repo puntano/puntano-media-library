@@ -65,6 +65,13 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_process::init())
+        .plugin(tauri_plugin_single_instance::init(|app, _args, _cwd| {
+            let _ = app.get_webview_window("main").map(|w| {
+                let _ = w.show();
+                let _ = w.unminimize();
+                let _ = w.set_focus();
+            });
+        }))
         .register_uri_scheme_protocol("puntano-thumb", move |ctx, request| {
             // Stream thumbnail directly from disk cache to WebViews with zero IPC serialization
             let raw_path = request.uri().path();
@@ -99,6 +106,41 @@ pub fn run() {
                             .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
                             .body(bytes)
                             .unwrap();
+                    }
+                }
+            }
+
+            // On-demand extraction fallback: if thumbnail is not yet in cache, try extracting it right now
+            if let Ok(db_path) = app_handle.path().app_data_dir().map(|d| d.join("puntano.db")) {
+                if let Ok(conn) = rusqlite::Connection::open(&db_path) {
+                    if let Ok(mut stmt) = conn.prepare("SELECT file_path, media_type, duration FROM media_files WHERE file_hash = ?1 LIMIT 1;") {
+                        if let Ok(row) = stmt.query_row(rusqlite::params![file_hash], |r| {
+                            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<f64>>(2)?))
+                        }) {
+                            let (src_path, media_type, duration) = row;
+                            let src = std::path::Path::new(&src_path);
+                            if src.exists() {
+                                let extract_res = if media_type == "video" {
+                                    crate::thumbnails::video_extractor::VideoKeyframeExtractor::extract_keyframe(src, &target_file, duration)
+                                } else {
+                                    crate::thumbnails::resizer::ThumbnailResizer::generate_photo_thumbnail(src, &target_file)
+                                };
+                                if extract_res.is_ok() && ThumbnailCache::is_valid_cached_file(&target_file) {
+                                    if let Ok(bytes) = fs::read(&target_file) {
+                                        let content_type = if target_file.extension().and_then(|s| s.to_str()) == Some("jpg") {
+                                            "image/jpeg"
+                                        } else {
+                                            "image/webp"
+                                        };
+                                        return Response::builder()
+                                            .header(header::CONTENT_TYPE, content_type)
+                                            .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+                                            .body(bytes)
+                                            .unwrap();
+                                    }
+                                }
+                            }
+                        }
                     }
                 }
             }

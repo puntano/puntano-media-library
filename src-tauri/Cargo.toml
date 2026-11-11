@@ -1,6 +1,6 @@
 [package]
 name = "puntano-media-library"
-version = "0.4.2"
+version = "0.4.3"
 description = "High-Performance Cross-Platform Media Library"
 authors = ["Puntano Team"]
 edition = "2021"
@@ -18,6 +18,7 @@ tauri = { version = "2.1", features = ["protocol-asset"] }
 tauri-plugin-dialog = "2"
 tauri-plugin-fs = "2"
 tauri-plugin-process = "2"
+tauri-plugin-single-instance = "2"
 
 # Serialization & JSON
 serde = { version = "1.0", features = ["derive"] }
@@ -34,6 +35,7 @@ crossbeam-channel = "0.5"
 
 # Fast EXIF and Video ISO BMFF atom parsing
 nom-exif = "3.8"
+regex = "1.10"
 
 # Ultra-fast hashing
 xxhash-rust = { version = "0.8", features = ["xxh64"] }

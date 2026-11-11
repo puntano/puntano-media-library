@@ -17,12 +17,12 @@ impl ThumbnailCache {
         Self { base_dir: dir }
     }
 
-    /// Verifies that a cached thumbnail file exists on disk and is non-empty.
-    /// Automatically cleans up any 0-byte leftover file from an interrupted write.
+    /// Verifies that a cached thumbnail file exists on disk and is a valid image (>= 500 bytes).
+    /// Automatically cleans up any 0-byte or corrupted/placeholder leftover file (< 500 bytes).
     pub fn is_valid_cached_file(path: &Path) -> bool {
         match fs::metadata(path) {
-            Ok(meta) if meta.is_file() && meta.len() > 0 => true,
-            Ok(meta) if meta.is_file() && meta.len() == 0 => {
+            Ok(meta) if meta.is_file() && meta.len() >= 500 => true,
+            Ok(meta) if meta.is_file() => {
                 let _ = fs::remove_file(path);
                 false
             }

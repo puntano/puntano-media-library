@@ -103,7 +103,7 @@ export const MapView: React.FC = () => {
             bounds.getNorth(),
             bounds.getWest(),
             bounds.getEast(),
-            20000,
+            100000,
             filterIdsRef.current.albumId,
             filterIdsRef.current.tagId
           )
@@ -123,7 +123,7 @@ export const MapView: React.FC = () => {
         90,
         -180,
         180,
-        20000,
+        100000,
         filterIdsRef.current.albumId,
         filterIdsRef.current.tagId
       )
@@ -152,7 +152,7 @@ export const MapView: React.FC = () => {
         bounds.getNorth(),
         bounds.getWest(),
         bounds.getEast(),
-        20000,
+        100000,
         selectedAlbumId,
         selectedTagId
       )

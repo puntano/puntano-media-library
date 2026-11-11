@@ -141,6 +141,7 @@ export const MediaThumbnail: React.FC<MediaThumbnailProps> = memo(({
         objectFit: 'cover',
         display: 'block',
         transform: rotationDeg !== 0 ? `rotate(${rotationDeg}deg)` : undefined,
+        imageOrientation: 'none' as any,
         ...style,
       }}
     />

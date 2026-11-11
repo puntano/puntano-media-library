@@ -119,7 +119,10 @@ impl ThumbnailResizer {
 
         #[cfg(target_os = "macos")]
         {
-            return Self::extract_macos_sips_thumbnail(path, max_dim);
+            if let Ok(img) = Self::extract_macos_sips_thumbnail(path, max_dim) {
+                return Ok(img);
+            }
+            return Self::extract_macos_ql_thumbnail(path, max_dim);
         }
 
         #[cfg(not(any(target_os = "windows", target_os = "macos")))]
@@ -139,11 +142,11 @@ impl ThumbnailResizer {
             BITMAPINFOHEADER, BI_RGB, DIB_RGB_COLORS, HBITMAP, HGDIOBJ,
         };
         use windows::Win32::System::Com::{
-            CoInitializeEx, CoUninitialize, COINIT_APARTMENTTHREADED, COINIT_DISABLE_OLE1DDE,
+            CoInitializeEx, CoUninitialize, COINIT_MULTITHREADED,
         };
         use windows::Win32::UI::Shell::{
             IShellItemImageFactory, SHCreateItemFromParsingName, SIIGBF_BIGGERSIZEOK,
-            SIIGBF_THUMBNAILONLY,
+            SIIGBF_RESIZETOFIT,
         };
 
         struct ComGuard(bool);
@@ -180,7 +183,7 @@ impl ThumbnailResizer {
             .collect();
 
         unsafe {
-            let hr = CoInitializeEx(None, COINIT_APARTMENTTHREADED | COINIT_DISABLE_OLE1DDE);
+            let hr = CoInitializeEx(None, COINIT_MULTITHREADED);
             // S_OK (0) or S_FALSE (1) require matching CoUninitialize; RPC_E_CHANGED_MODE means thread already initialized COM
             let _com_guard = ComGuard(hr.is_ok());
 
@@ -188,14 +191,13 @@ impl ThumbnailResizer {
                 SHCreateItemFromParsingName(PCWSTR(wide.as_ptr()), None)
                     .map_err(|e| format!("SHCreateItemFromParsingName failed: {}", e))?;
 
+            let target_size = SIZE {
+                cx: max_dim as i32,
+                cy: max_dim as i32,
+            };
             let hbitmap = factory
-                .GetImage(
-                    SIZE {
-                        cx: max_dim as i32,
-                        cy: max_dim as i32,
-                    },
-                    SIIGBF_BIGGERSIZEOK | SIIGBF_THUMBNAILONLY,
-                )
+                .GetImage(target_size, SIIGBF_BIGGERSIZEOK)
+                .or_else(|_| factory.GetImage(target_size, SIIGBF_RESIZETOFIT))
                 .map_err(|e| format!("IShellItemImageFactory::GetImage failed: {}", e))?;
 
             let _bmp_guard = HBitmapGuard(hbitmap);
@@ -283,6 +285,61 @@ impl ThumbnailResizer {
             .and_then(|r| r.decode().map_err(|e| e.to_string()));
         let _ = fs::remove_file(&tmp_out);
         decoded
+    }
+
+    #[cfg(target_os = "macos")]
+    fn extract_macos_ql_thumbnail(path: &Path, max_dim: u32) -> Result<DynamicImage, String> {
+        let unique_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_nanos())
+            .unwrap_or(0);
+        let temp_dir = std::env::temp_dir().join(format!("puntano_ql_{}_{}", std::process::id(), unique_id));
+        let _ = fs::create_dir_all(&temp_dir);
+
+        let output = std::process::Command::new("/usr/bin/qlmanage")
+            .args([
+                "-t",
+                "-s",
+                &max_dim.to_string(),
+                "-o",
+                &temp_dir.to_string_lossy(),
+                &path.to_string_lossy(),
+            ])
+            .output()
+            .map_err(|e| format!("qlmanage execution failed: {}", e))?;
+
+        let res = if output.status.success() {
+            let file_name = path.file_name().map(|s| s.to_string_lossy().to_string()).unwrap_or_default();
+            let expected_png = temp_dir.join(format!("{}.png", file_name));
+
+            let candidate = if expected_png.exists() {
+                Some(expected_png)
+            } else {
+                fs::read_dir(&temp_dir).ok().and_then(|entries| {
+                    entries.flatten().find_map(|e| {
+                        let p = e.path();
+                        if p.extension().and_then(|ext| ext.to_str()) == Some("png") {
+                            Some(p)
+                        } else {
+                            None
+                        }
+                    })
+                })
+            };
+
+            match candidate {
+                Some(png_path) => ImageReader::open(&png_path)
+                    .map_err(|e| e.to_string())
+                    .and_then(|r| r.with_guessed_format().map_err(|e| e.to_string()))
+                    .and_then(|r| r.decode().map_err(|e| e.to_string())),
+                None => Err("qlmanage produced no thumbnail image".into()),
+            }
+        } else {
+            Err("qlmanage failed to extract thumbnail".into())
+        };
+
+        let _ = fs::remove_dir_all(&temp_dir);
+        res
     }
 
     fn calculate_dimensions(w: u32, h: u32, max_dim: u32) -> (u32, u32) {

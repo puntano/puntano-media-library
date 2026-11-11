@@ -734,6 +734,7 @@ export const LightboxModal: React.FC = () => {
                     borderRadius: 'var(--radius-sm)',
                     filter: 'blur(8px)',
                     opacity: 0.7,
+                    imageOrientation: 'none' as any,
                   }}
                 />
               )}
@@ -759,6 +760,7 @@ export const LightboxModal: React.FC = () => {
                   position: isFullResLoaded ? 'static' : 'absolute',
                   opacity: isFullResLoaded ? 1 : 0,
                   transition: 'opacity 0.2s ease-in',
+                  imageOrientation: 'none' as any,
                 }}
               />
             </div>
