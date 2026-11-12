@@ -24,7 +24,7 @@ struct EngineInner {
     env: *mut ort_sys::OrtEnv,
     detector_session: *mut ort_sys::OrtSession,
     recognizer_session: *mut ort_sys::OrtSession,
-    allocator: *mut ort_sys::OrtAllocator,
+    _allocator: *mut ort_sys::OrtAllocator,
     memory_info: *mut ort_sys::OrtMemoryInfo,
 }
 
@@ -140,7 +140,7 @@ impl FaceEngine {
                     env,
                     detector_session,
                     recognizer_session,
-                    allocator,
+                    _allocator: allocator,
                     memory_info,
                 }),
             })

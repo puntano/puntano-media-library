@@ -23,17 +23,16 @@ pub struct FaceScanProgress {
 
 pub struct FaceScanWorker {
     db: Arc<Mutex<Connection>>,
-    engine: Option<Arc<FaceEngine>>,
+    engine: Mutex<Option<Arc<FaceEngine>>>,
     app_handle: AppHandle,
     is_running: Arc<AtomicBool>,
 }
 
 impl FaceScanWorker {
     pub fn new(db: Arc<Mutex<Connection>>, app_handle: AppHandle) -> Self {
-        let engine = Self::init_engine(&app_handle);
         Self {
             db,
-            engine,
+            engine: Mutex::new(None),
             app_handle,
             is_running: Arc::new(AtomicBool::new(false)),
         }
@@ -111,11 +110,19 @@ impl FaceScanWorker {
             return Ok(false); // Already running
         }
 
-        let engine = match &self.engine {
-            Some(e) => Arc::clone(e),
-            None => {
-                return Err("FaceEngine is not initialized (models or runtime DLL missing)".into());
+        let engine = {
+            let mut engine_guard = self.engine.lock().map_err(|e| e.to_string())?;
+            if engine_guard.is_none() {
+                match Self::init_engine(&self.app_handle) {
+                    Some(e) => {
+                        *engine_guard = Some(e);
+                    }
+                    None => {
+                        return Err("FaceEngine failed to initialize (models or runtime DLL missing)".into());
+                    }
+                }
             }
+            Arc::clone(engine_guard.as_ref().unwrap())
         };
 
         self.is_running.store(true, Ordering::Relaxed);

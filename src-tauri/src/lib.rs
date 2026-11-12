@@ -350,6 +350,9 @@ pub fn run() {
                 face_worker,
             });
 
+            log::info!("[Puntano Engine] Setup hook completed successfully!");
+            crate::logger::flush();
+
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![
@@ -408,6 +411,27 @@ pub fn run() {
             commands::people::stop_face_scan,
             commands::people::get_face_scan_progress,
         ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .build(tauri::generate_context!())
+        .expect("error while building tauri application")
+        .run(|_app_handle, event| {
+            match &event {
+                tauri::RunEvent::Ready => {
+                    log::info!("[RunEvent] Ready!");
+                    crate::logger::flush();
+                }
+                tauri::RunEvent::WindowEvent { label, event, .. } => {
+                    log::info!("[RunEvent] Window '{}': {:?}", label, event);
+                    crate::logger::flush();
+                }
+                tauri::RunEvent::ExitRequested { code, .. } => {
+                    log::info!("[RunEvent] ExitRequested: code={:?}", code);
+                    crate::logger::flush();
+                }
+                tauri::RunEvent::Exit => {
+                    log::info!("[RunEvent] App exited!");
+                    crate::logger::flush();
+                }
+                _ => {}
+            }
+        });
 }
