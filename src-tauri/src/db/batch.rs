@@ -1531,10 +1531,10 @@ impl MediaRepository {
         Ok(faces)
     }
 
-    pub fn get_face_crop_by_id(conn: &Connection, face_id: i64) -> Result<Option<(String, f32, f32, f32, f32)>> {
+    pub fn get_face_crop_by_id(conn: &Connection, face_id: i64) -> Result<Option<(String, f32, f32, f32, f32, u32)>> {
         let mut stmt = conn.prepare_cached(
             r#"
-            SELECT mf_file.file_path, mf.bbox_x, mf.bbox_y, mf.bbox_w, mf.bbox_h
+            SELECT mf_file.file_path, mf.bbox_x, mf.bbox_y, mf.bbox_w, mf.bbox_h, COALESCE(mf_file.orientation, 1)
             FROM media_faces mf
             JOIN media_files mf_file ON mf.media_id = mf_file.id
             WHERE mf.id = ?1
@@ -1543,7 +1543,7 @@ impl MediaRepository {
         )?;
 
         let mut rows = stmt.query_map(params![face_id], |row| {
-            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?, row.get(3)?, row.get(4)?, row.get(5)?))
         })?;
 
         match rows.next() {

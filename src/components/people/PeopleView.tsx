@@ -14,9 +14,37 @@ import {
   Star,
 } from 'lucide-react';
 import { tauriApi } from '../../services/tauriApi';
+import { getFaceThumbnailUrl } from '../../services/thumbnailProtocol';
 import { Person, MediaItem, FaceScanProgress } from '../../types/media';
 import { MediaThumbnail } from '../common/MediaThumbnail';
 import { useLibraryStore } from '../../stores/libraryStore';
+
+const FaceAvatar: React.FC<{ faceId?: number | null; name?: string | null; iconSize: number }> = ({
+  faceId,
+  name,
+  iconSize,
+}) => {
+  const [failed, setFailed] = useState(false);
+
+  useEffect(() => {
+    setFailed(false);
+  }, [faceId]);
+
+  if (!faceId || failed) {
+    return <User size={iconSize} color="var(--text-secondary)" />;
+  }
+
+  return (
+    <img
+      src={getFaceThumbnailUrl(faceId)}
+      alt={name || 'Face'}
+      loading="lazy"
+      decoding="async"
+      onError={() => setFailed(true)}
+      style={{ width: '100%', height: '100%', objectFit: 'cover' }}
+    />
+  );
+};
 
 export const PeopleView: React.FC = () => {
   const [people, setPeople] = useState<Person[]>([]);
@@ -271,15 +299,7 @@ export const PeopleView: React.FC = () => {
                 boxShadow: '0 4px 14px rgba(0,0,0,0.25)',
               }}
             >
-              {selectedPerson.cover_face_id ? (
-                <img
-                  src={`puntano-thumb://localhost/face/${selectedPerson.cover_face_id}`}
-                  alt={selectedPerson.name || 'Face'}
-                  style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                />
-              ) : (
-                <User size={48} color="var(--text-secondary)" />
-              )}
+              <FaceAvatar faceId={selectedPerson.cover_face_id} name={selectedPerson.name} iconSize={48} />
             </div>
 
             {/* Info & Name edit */}
@@ -761,15 +781,7 @@ export const PeopleView: React.FC = () => {
                         (e.currentTarget as HTMLElement).style.transform = 'scale(1.0)';
                       }}
                     >
-                      {person.cover_face_id ? (
-                        <img
-                          src={`puntano-thumb://localhost/face/${person.cover_face_id}`}
-                          alt={person.name || 'Face'}
-                          style={{ width: '100%', height: '100%', objectFit: 'cover' }}
-                        />
-                      ) : (
-                        <User size={40} color="var(--text-secondary)" />
-                      )}
+                      <FaceAvatar faceId={person.cover_face_id} name={person.name} iconSize={40} />
 
                       {/* Merge selection checkbox indicator */}
                       {isMergeMode && (

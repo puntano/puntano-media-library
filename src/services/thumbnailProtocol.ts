@@ -1,14 +1,22 @@
 import { isTauri } from './tauriApi';
 
+function getThumbProtocolBase(): string {
+  // Windows WebView2 handles custom URI schemes via http://<scheme>.localhost/
+  // macOS/Linux handle them via <scheme>://localhost/
+  const isWindows = typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows');
+  return isWindows ? 'http://puntano-thumb.localhost' : 'puntano-thumb://localhost';
+}
+
+export function getFaceThumbnailUrl(faceId: number): string {
+  if (isTauri()) {
+    return `${getThumbProtocolBase()}/face/${faceId}.jpg`;
+  }
+  return '';
+}
+
 export function getThumbnailUrl(fileHash: string, mediaType: string = 'photo'): string {
   if (isTauri()) {
-    // Windows WebView2 handles custom URI schemes via http://<scheme>.localhost/
-    // macOS/Linux handle them via <scheme>://localhost/
-    const isWindows = typeof navigator !== 'undefined' && navigator.userAgent.includes('Windows');
-    if (isWindows) {
-      return `http://puntano-thumb.localhost/${fileHash}.jpg`;
-    }
-    return `puntano-thumb://localhost/${fileHash}.jpg`;
+    return `${getThumbProtocolBase()}/${fileHash}.jpg`;
   }
 
   // Elegant gradient placeholder for browser development

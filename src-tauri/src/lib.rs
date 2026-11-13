@@ -105,7 +105,7 @@ pub fn run() {
                     // On-demand crop of detected face with 20% margin
                     if let Ok(db_path) = app_handle.path().app_data_dir().map(|d| d.join("puntano.db")) {
                         if let Ok(conn) = rusqlite::Connection::open(&db_path) {
-                            if let Ok(Some((src_path, bx, by, bw, bh))) = crate::db::batch::MediaRepository::get_face_crop_by_id(&conn, face_id) {
+                            if let Ok(Some((src_path, bx, by, bw, bh, orientation))) = crate::db::batch::MediaRepository::get_face_crop_by_id(&conn, face_id) {
                                 if let Ok(img) = image::open(&src_path) {
                                     use image::GenericImageView;
                                     let (w, h) = img.dimensions();
@@ -119,6 +119,16 @@ pub fn run() {
                                     let crop_h = (y2.saturating_sub(y1)).max(1);
                                     let cropped = img.crop_imm(x1, y1, crop_w, crop_h);
                                     let thumb = cropped.resize_exact(200, 200, image::imageops::FilterType::Triangle);
+                                    let thumb = match orientation {
+                                        2 => thumb.fliph(),
+                                        3 => thumb.rotate180(),
+                                        4 => thumb.flipv(),
+                                        5 => thumb.rotate90().fliph(),
+                                        6 => thumb.rotate90(),
+                                        7 => thumb.rotate270().fliph(),
+                                        8 => thumb.rotate270(),
+                                        _ => thumb,
+                                    };
                                     let _ = fs::create_dir_all(&face_thumb_dir);
                                     let _ = thumb.save(&face_thumb_file);
 
@@ -134,6 +144,10 @@ pub fn run() {
                         }
                     }
                 }
+                return Response::builder()
+                    .status(404)
+                    .body(Vec::new())
+                    .unwrap();
             }
 
             let file_hash = file_part
