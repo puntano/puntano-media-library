@@ -61,6 +61,7 @@ pub fn run() {
     let is_indexing_active = Arc::new(AtomicBool::new(false));
     let failed_hashes: Arc<RwLock<HashSet<String>>> = Arc::new(RwLock::new(HashSet::new()));
     let failed_hashes_proto = failed_hashes.clone();
+    let decode_semaphore = Arc::new(tokio::sync::Semaphore::new(4));
 
     tauri::Builder::default()
         .plugin(tauri_plugin_dialog::init())
@@ -73,169 +74,202 @@ pub fn run() {
                 let _ = w.set_focus();
             });
         }))
-        .register_uri_scheme_protocol("puntano-thumb", move |ctx, request| {
-            // Stream thumbnail directly from disk cache to WebViews with zero IPC serialization
-            let raw_path = request.uri().path();
-            let clean = raw_path.trim_start_matches('/');
-            let file_part = clean.strip_prefix("localhost/").unwrap_or(clean);
+        .register_asynchronous_uri_scheme_protocol("puntano-thumb", move |ctx, request, responder| {
+            let raw_path = request.uri().path().to_string();
+            let app_handle = ctx.app_handle().clone();
+            let failed_hashes_proto = failed_hashes_proto.clone();
+            let decode_semaphore = decode_semaphore.clone();
 
-            let app_handle = ctx.app_handle();
-            let cache_dir = app_handle
-                .path()
-                .app_cache_dir()
-                .unwrap_or_else(|_| std::path::PathBuf::from("."));
+            tauri::async_runtime::spawn(async move {
+                let clean = raw_path.trim_start_matches('/');
+                let file_part = clean.strip_prefix("localhost/").unwrap_or(clean);
+                let cache_dir = app_handle
+                    .path()
+                    .app_cache_dir()
+                    .unwrap_or_else(|_| std::path::PathBuf::from("."));
 
-            // Support cropped face avatar requests: puntano-thumb://face/{face_id}
-            if let Some(face_subpath) = file_part.strip_prefix("face/") {
-                let face_id_str = face_subpath.split('?').next().unwrap_or(face_subpath).trim_end_matches(".jpg");
-                if let Ok(face_id) = face_id_str.parse::<i64>() {
-                    let face_thumb_dir = cache_dir.join("faces");
-                    let face_thumb_file = face_thumb_dir.join(format!("{}.jpg", face_id));
+                // Support cropped face avatar requests: puntano-thumb://face/{face_id}
+                if let Some(face_subpath) = file_part.strip_prefix("face/") {
+                    let face_id_str = face_subpath.split('?').next().unwrap_or(face_subpath).trim_end_matches(".jpg");
+                    if let Ok(face_id) = face_id_str.parse::<i64>() {
+                        let face_thumb_dir = cache_dir.join("faces");
+                        let face_thumb_file = face_thumb_dir.join(format!("{}.jpg", face_id));
 
-                    if face_thumb_file.exists() {
-                        if let Ok(bytes) = fs::read(&face_thumb_file) {
-                            return Response::builder()
-                                .header(header::CONTENT_TYPE, "image/jpeg")
-                                .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
-                                .body(bytes)
-                                .unwrap();
+                        if let Ok(bytes) = tokio::fs::read(&face_thumb_file).await {
+                            if !bytes.is_empty() {
+                                responder.respond(
+                                    Response::builder()
+                                        .header(header::CONTENT_TYPE, "image/jpeg")
+                                        .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+                                        .body(bytes)
+                                        .unwrap(),
+                                );
+                                return;
+                            }
+                        }
+
+                        // Bounded on-demand crop so concurrent requests never freeze WebView2
+                        let _permit = decode_semaphore.acquire().await.ok();
+                        let app_h = app_handle.clone();
+                        let resp_bytes = tauri::async_runtime::spawn_blocking(move || -> Option<Vec<u8>> {
+                            if let Ok(bytes) = fs::read(&face_thumb_file) {
+                                if !bytes.is_empty() {
+                                    return Some(bytes);
+                                }
+                            }
+                            let db_path = app_h.path().app_data_dir().map(|d| d.join("puntano.db")).ok()?;
+                            let conn = rusqlite::Connection::open(&db_path).ok()?;
+                            let (src_path, bx, by, bw, bh, orientation) =
+                                crate::db::batch::MediaRepository::get_face_crop_by_id(&conn, face_id).ok()??;
+                            let img = image::open(&src_path).ok()?;
+                            use image::GenericImageView;
+                            let (w, h) = img.dimensions();
+                            let pad_x = bw * 0.20;
+                            let pad_y = bh * 0.20;
+                            let x1 = ((bx - pad_x) * w as f32).max(0.0) as u32;
+                            let y1 = ((by - pad_y) * h as f32).max(0.0) as u32;
+                            let x2 = ((bx + bw + pad_x) * w as f32).min(w as f32) as u32;
+                            let y2 = ((by + bh + pad_y) * h as f32).min(h as f32) as u32;
+                            let crop_w = (x2.saturating_sub(x1)).max(1);
+                            let crop_h = (y2.saturating_sub(y1)).max(1);
+                            let cropped = img.crop_imm(x1, y1, crop_w, crop_h);
+                            let thumb = cropped.resize_exact(200, 200, image::imageops::FilterType::Triangle);
+                            let thumb = crate::recognition::engine::FaceEngine::apply_orientation(thumb, orientation);
+                            let _ = fs::create_dir_all(&face_thumb_dir);
+                            let _ = thumb.save(&face_thumb_file);
+                            fs::read(&face_thumb_file).ok()
+                        })
+                        .await
+                        .ok()
+                        .flatten();
+
+                        if let Some(bytes) = resp_bytes {
+                            responder.respond(
+                                Response::builder()
+                                    .header(header::CONTENT_TYPE, "image/jpeg")
+                                    .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+                                    .body(bytes)
+                                    .unwrap(),
+                            );
+                            return;
                         }
                     }
 
-                    // On-demand crop of detected face with 20% margin
-                    if let Ok(db_path) = app_handle.path().app_data_dir().map(|d| d.join("puntano.db")) {
-                        if let Ok(conn) = rusqlite::Connection::open(&db_path) {
-                            if let Ok(Some((src_path, bx, by, bw, bh, orientation))) = crate::db::batch::MediaRepository::get_face_crop_by_id(&conn, face_id) {
-                                if let Ok(img) = image::open(&src_path) {
-                                    use image::GenericImageView;
-                                    let (w, h) = img.dimensions();
-                                    let pad_x = bw * 0.20;
-                                    let pad_y = bh * 0.20;
-                                    let x1 = ((bx - pad_x) * w as f32).max(0.0) as u32;
-                                    let y1 = ((by - pad_y) * h as f32).max(0.0) as u32;
-                                    let x2 = ((bx + bw + pad_x) * w as f32).min(w as f32) as u32;
-                                    let y2 = ((by + bh + pad_y) * h as f32).min(h as f32) as u32;
-                                    let crop_w = (x2.saturating_sub(x1)).max(1);
-                                    let crop_h = (y2.saturating_sub(y1)).max(1);
-                                    let cropped = img.crop_imm(x1, y1, crop_w, crop_h);
-                                    let thumb = cropped.resize_exact(200, 200, image::imageops::FilterType::Triangle);
-                                    let thumb = match orientation {
-                                        2 => thumb.fliph(),
-                                        3 => thumb.rotate180(),
-                                        4 => thumb.flipv(),
-                                        5 => thumb.rotate90().fliph(),
-                                        6 => thumb.rotate90(),
-                                        7 => thumb.rotate270().fliph(),
-                                        8 => thumb.rotate270(),
-                                        _ => thumb,
-                                    };
-                                    let _ = fs::create_dir_all(&face_thumb_dir);
-                                    let _ = thumb.save(&face_thumb_file);
+                    responder.respond(Response::builder().status(404).body(Vec::new()).unwrap());
+                    return;
+                }
 
-                                    if let Ok(bytes) = fs::read(&face_thumb_file) {
-                                        return Response::builder()
-                                            .header(header::CONTENT_TYPE, "image/jpeg")
-                                            .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
-                                            .body(bytes)
-                                            .unwrap();
-                                    }
-                                }
-                            }
+                let file_hash = file_part
+                    .split('?')
+                    .next()
+                    .unwrap_or(file_part)
+                    .trim_end_matches(".jpg")
+                    .trim_end_matches(".webp")
+                    .to_string();
+
+                let cache = ThumbnailCache::new(&cache_dir);
+                let target_file = cache.resolve_path(&file_hash);
+
+                if ThumbnailCache::is_valid_cached_file(&target_file) {
+                    if let Ok(bytes) = tokio::fs::read(&target_file).await {
+                        if !bytes.is_empty() {
+                            let content_type = if target_file.extension().and_then(|s| s.to_str()) == Some("jpg") {
+                                "image/jpeg"
+                            } else {
+                                "image/webp"
+                            };
+                            responder.respond(
+                                Response::builder()
+                                    .header(header::CONTENT_TYPE, content_type)
+                                    .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
+                                    .body(bytes)
+                                    .unwrap(),
+                            );
+                            return;
                         }
                     }
                 }
-                return Response::builder()
-                    .status(404)
-                    .body(Vec::new())
-                    .unwrap();
-            }
 
-            let file_hash = file_part
-                .split('?')
-                .next()
-                .unwrap_or(file_part)
-                .trim_end_matches(".jpg")
-                .trim_end_matches(".webp");
+                // On-demand extraction fallback: if thumbnail is not yet in cache, try extracting it
+                let _permit = decode_semaphore.acquire().await.ok();
+                let app_h = app_handle.clone();
+                let target_clone = target_file.clone();
+                let hash_clone = file_hash.clone();
+                let extracted_bytes = tauri::async_runtime::spawn_blocking(move || -> Option<Vec<u8>> {
+                    if ThumbnailCache::is_valid_cached_file(&target_clone) {
+                        if let Ok(bytes) = fs::read(&target_clone) {
+                            if !bytes.is_empty() {
+                                return Some(bytes);
+                            }
+                        }
+                    }
+                    let db_path = app_h.path().app_data_dir().map(|d| d.join("puntano.db")).ok()?;
+                    let conn = rusqlite::Connection::open(&db_path).ok()?;
+                    let mut stmt = conn.prepare("SELECT file_path, media_type, duration FROM media_files WHERE file_hash = ?1 LIMIT 1;").ok()?;
+                    let (src_path, media_type, duration) = stmt.query_row(rusqlite::params![hash_clone], |r| {
+                        Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<f64>>(2)?))
+                    }).ok()?;
+                    let src = std::path::Path::new(&src_path);
+                    if !src.exists() {
+                        return None;
+                    }
+                    let extract_res = if media_type == "video" {
+                        crate::thumbnails::video_extractor::VideoKeyframeExtractor::extract_keyframe(src, &target_clone, duration)
+                    } else {
+                        crate::thumbnails::resizer::ThumbnailResizer::generate_photo_thumbnail(src, &target_clone)
+                    };
+                    if extract_res.is_ok() && ThumbnailCache::is_valid_cached_file(&target_clone) {
+                        fs::read(&target_clone).ok()
+                    } else {
+                        None
+                    }
+                })
+                .await
+                .ok()
+                .flatten();
 
-            let cache = ThumbnailCache::new(&cache_dir);
-            let target_file = cache.resolve_path(file_hash);
-
-            if ThumbnailCache::is_valid_cached_file(&target_file) {
-                if let Ok(bytes) = fs::read(&target_file) {
-                    if !bytes.is_empty() {
-                        let content_type = if target_file.extension().and_then(|s| s.to_str()) == Some("jpg") {
-                            "image/jpeg"
-                        } else {
-                            "image/webp"
-                        };
-                        return Response::builder()
+                if let Some(bytes) = extracted_bytes {
+                    let content_type = if target_file.extension().and_then(|s| s.to_str()) == Some("jpg") {
+                        "image/jpeg"
+                    } else {
+                        "image/webp"
+                    };
+                    responder.respond(
+                        Response::builder()
                             .header(header::CONTENT_TYPE, content_type)
                             .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
                             .body(bytes)
-                            .unwrap();
-                    }
+                            .unwrap(),
+                    );
+                    return;
                 }
-            }
 
-            // On-demand extraction fallback: if thumbnail is not yet in cache, try extracting it right now
-            if let Ok(db_path) = app_handle.path().app_data_dir().map(|d| d.join("puntano.db")) {
-                if let Ok(conn) = rusqlite::Connection::open(&db_path) {
-                    if let Ok(mut stmt) = conn.prepare("SELECT file_path, media_type, duration FROM media_files WHERE file_hash = ?1 LIMIT 1;") {
-                        if let Ok(row) = stmt.query_row(rusqlite::params![file_hash], |r| {
-                            Ok((r.get::<_, String>(0)?, r.get::<_, String>(1)?, r.get::<_, Option<f64>>(2)?))
-                        }) {
-                            let (src_path, media_type, duration) = row;
-                            let src = std::path::Path::new(&src_path);
-                            if src.exists() {
-                                let extract_res = if media_type == "video" {
-                                    crate::thumbnails::video_extractor::VideoKeyframeExtractor::extract_keyframe(src, &target_file, duration)
-                                } else {
-                                    crate::thumbnails::resizer::ThumbnailResizer::generate_photo_thumbnail(src, &target_file)
-                                };
-                                if extract_res.is_ok() && ThumbnailCache::is_valid_cached_file(&target_file) {
-                                    if let Ok(bytes) = fs::read(&target_file) {
-                                        let content_type = if target_file.extension().and_then(|s| s.to_str()) == Some("jpg") {
-                                            "image/jpeg"
-                                        } else {
-                                            "image/webp"
-                                        };
-                                        return Response::builder()
-                                            .header(header::CONTENT_TYPE, content_type)
-                                            .header(header::CACHE_CONTROL, "public, max-age=31536000, immutable")
-                                            .body(bytes)
-                                            .unwrap();
-                                    }
-                                }
-                            }
-                        }
-                    }
+                if failed_hashes_proto
+                    .read()
+                    .map(|set| set.contains(&file_hash))
+                    .unwrap_or(false)
+                {
+                    responder.respond(
+                        Response::builder()
+                            .status(404)
+                            .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
+                            .header(header::CACHE_CONTROL, "no-store, no-cache")
+                            .body(b"Thumbnail generation failed".to_vec())
+                            .unwrap(),
+                    );
+                    return;
                 }
-            }
 
-            // If thumbnail generation failed for this hash in the current session, return 404
-            // so the frontend immediately falls back instead of showing "PROCESSING..." indefinitely.
-            if failed_hashes_proto
-                .read()
-                .map(|set| set.contains(file_hash))
-                .unwrap_or(false)
-            {
-                return Response::builder()
-                    .status(404)
-                    .header(header::CONTENT_TYPE, "text/plain; charset=utf-8")
-                    .header(header::CACHE_CONTROL, "no-store, no-cache")
-                    .body(b"Thumbnail generation failed".to_vec())
-                    .unwrap();
-            }
-
-            // High-speed non-blocking SVG placeholder while generation is processed by daemon.
-            // Uses 385x289 natural dimensions so the frontend can distinguish pending placeholders from 384px ready thumbnails.
-            let fallback_svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="385" height="289" viewBox="0 0 384 288"><rect width="100%" height="100%" fill="#182234"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#64748b" font-family="sans-serif" font-size="14" font-weight="600">PROCESSING...</text></svg>"##;
-            Response::builder()
-                .status(200)
-                .header(header::CONTENT_TYPE, "image/svg+xml")
-                .header(header::CACHE_CONTROL, "no-store, no-cache")
-                .body(fallback_svg.as_bytes().to_vec())
-                .unwrap()
+                let fallback_svg = r##"<svg xmlns="http://www.w3.org/2000/svg" width="385" height="289" viewBox="0 0 384 288"><rect width="100%" height="100%" fill="#182234"/><text x="50%" y="50%" dominant-baseline="middle" text-anchor="middle" fill="#64748b" font-family="sans-serif" font-size="14" font-weight="600">PROCESSING...</text></svg>"##;
+                responder.respond(
+                    Response::builder()
+                        .status(200)
+                        .header(header::CONTENT_TYPE, "image/svg+xml")
+                        .header(header::CACHE_CONTROL, "no-store, no-cache")
+                        .body(fallback_svg.as_bytes().to_vec())
+                        .unwrap(),
+                );
+            });
         })
         .setup(move |app| {
             #[cfg(desktop)]
@@ -423,6 +457,7 @@ pub fn run() {
             commands::people::get_media_faces,
             commands::people::start_face_scan,
             commands::people::stop_face_scan,
+            commands::people::rescan_faces,
             commands::people::get_face_scan_progress,
         ])
         .build(tauri::generate_context!())

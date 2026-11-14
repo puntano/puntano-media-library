@@ -1251,12 +1251,12 @@ impl MediaRepository {
         Ok(inserted_ids)
     }
 
-    pub fn get_unscanned_media_batch(conn: &Connection, limit: usize) -> Result<Vec<(i64, String)>> {
+    pub fn get_unscanned_media_batch(conn: &Connection, limit: usize) -> Result<Vec<(i64, String, u32)>> {
         let mut stmt = conn.prepare_cached(
-            "SELECT id, file_path FROM media_files WHERE face_scanned = 0 AND media_type IN ('photo', 'raw') ORDER BY id ASC LIMIT ?1;"
+            "SELECT id, file_path, COALESCE(orientation, 1) FROM media_files WHERE face_scanned = 0 AND media_type IN ('photo', 'raw') ORDER BY id ASC LIMIT ?1;"
         )?;
         let rows = stmt.query_map(params![limit as i64], |row| {
-            Ok((row.get(0)?, row.get(1)?))
+            Ok((row.get(0)?, row.get(1)?, row.get(2)?))
         })?;
 
         let mut items = Vec::new();
@@ -1264,6 +1264,15 @@ impl MediaRepository {
             items.push(r?);
         }
         Ok(items)
+    }
+
+    pub fn reset_face_scan(conn: &mut Connection) -> Result<()> {
+        let tx = conn.transaction()?;
+        tx.execute("DELETE FROM media_faces;", [])?;
+        tx.execute("DELETE FROM persons;", [])?;
+        tx.execute("UPDATE media_files SET face_scanned = 0 WHERE face_scanned != 0;", [])?;
+        tx.commit()?;
+        Ok(())
     }
 
     pub fn mark_media_face_scanned(conn: &mut Connection, media_ids: &[i64]) -> Result<()> {
@@ -1408,11 +1417,17 @@ impl MediaRepository {
                 mf.bbox_y as cover_bbox_y,
                 mf.bbox_w as cover_bbox_w,
                 mf.bbox_h as cover_bbox_h,
-                (SELECT COUNT(DISTINCT f.media_id) FROM media_faces f WHERE f.person_id = p.id) as face_count,
+                COALESCE(fc.face_count, 0) as face_count,
                 p.created_at
             FROM persons p
             LEFT JOIN media_faces mf ON p.cover_face_id = mf.id
             LEFT JOIN media_files mf_file ON mf.media_id = mf_file.id
+            LEFT JOIN (
+                SELECT person_id, COUNT(DISTINCT media_id) as face_count
+                FROM media_faces
+                WHERE person_id IS NOT NULL
+                GROUP BY person_id
+            ) fc ON fc.person_id = p.id
             ORDER BY face_count DESC, p.id ASC;
             "#
         )?;

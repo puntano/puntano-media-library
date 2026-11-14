@@ -147,25 +147,68 @@ impl FaceEngine {
         }
     }
 
-    /// Detect faces in an image using UltraFace 320x240 detector.
+    /// Apply EXIF orientation (1..8) so faces are upright before detection/embedding.
+    pub fn apply_orientation(img: DynamicImage, orientation: u32) -> DynamicImage {
+        match orientation {
+            2 => img.fliph(),
+            3 => img.rotate180(),
+            4 => img.flipv(),
+            5 => img.rotate90().fliph(),
+            6 => img.rotate90(),
+            7 => img.rotate270().fliph(),
+            8 => img.rotate270(),
+            _ => img,
+        }
+    }
+
+    /// Map a normalized bounding box from EXIF-oriented image coordinates back to raw image coordinates.
+    pub fn untransform_bbox(bx: f32, by: f32, bw: f32, bh: f32, orientation: u32) -> (f32, f32, f32, f32) {
+        let map_pt = |u: f32, v: f32| -> (f32, f32) {
+            match orientation {
+                2 => (1.0 - u, v),
+                3 => (1.0 - u, 1.0 - v),
+                4 => (u, 1.0 - v),
+                5 => (v, u),
+                6 => (v, 1.0 - u),
+                7 => (1.0 - v, 1.0 - u),
+                8 => (1.0 - v, u),
+                _ => (u, v),
+            }
+        };
+        let (rx1, ry1) = map_pt(bx, by);
+        let (rx2, ry2) = map_pt(bx + bw, by + bh);
+        let x = rx1.min(rx2).clamp(0.0, 1.0);
+        let y = ry1.min(ry2).clamp(0.0, 1.0);
+        let w = (rx1.max(rx2) - x).clamp(0.0, 1.0);
+        let h = (ry1.max(ry2) - y).clamp(0.0, 1.0);
+        (x, y, w, h)
+    }
+
+    /// Detect faces in an image using UltraFace 320x240 detector with aspect-ratio-preserving letterboxing.
     pub fn detect_faces(&self, img: &DynamicImage, conf_threshold: f32) -> Vec<DetectedFace> {
         let (orig_w, orig_h) = img.dimensions();
         if orig_w == 0 || orig_h == 0 {
             return Vec::new();
         }
 
-        // Resize image to 320x240 for UltraFace
-        let target_w = 320;
-        let target_h = 240;
-        let resized = img.resize_exact(target_w, target_h, FilterType::Triangle).to_rgb8();
+        // Letterbox into 320x240 preserving aspect ratio so portrait/panoramic faces are never squashed
+        let target_w: u32 = 320;
+        let target_h: u32 = 240;
+        let scale = (target_w as f32 / orig_w as f32).min(target_h as f32 / orig_h as f32);
+        let new_w = ((orig_w as f32 * scale).round() as u32).clamp(1, target_w);
+        let new_h = ((orig_h as f32 * scale).round() as u32).clamp(1, target_h);
+        let pad_x = (target_w - new_w) / 2;
+        let pad_y = (target_h - new_h) / 2;
 
-        // Convert to NCHW normalized [1, 3, 240, 320]
+        let resized = img.resize_exact(new_w, new_h, FilterType::Triangle).to_rgb8();
+
+        // Convert to NCHW normalized [1, 3, 240, 320]; padded border pixels normalize to 0.0 (127)
         let mut input_tensor = vec![0.0f32; 3 * target_h as usize * target_w as usize];
         let hw = (target_h * target_w) as usize;
-        for y in 0..target_h {
-            for x in 0..target_w {
+        for y in 0..new_h {
+            for x in 0..new_w {
                 let p = resized.get_pixel(x, y);
-                let idx = (y * target_w + x) as usize;
+                let idx = ((y + pad_y) * target_w + (x + pad_x)) as usize;
                 // Normalize: (val - 127.0) / 128.0
                 input_tensor[idx] = (p[0] as f32 - 127.0) / 128.0;          // R
                 input_tensor[hw + idx] = (p[1] as f32 - 127.0) / 128.0;     // G
@@ -227,16 +270,32 @@ impl FaceEngine {
             let mut candidates = Vec::new();
             if !scores_data.is_null() && !boxes_data.is_null() {
                 let num_boxes = 4420; // UltraFace 320x240 has exactly 4,420 prior boxes
+                let pad_x_norm = pad_x as f32 / target_w as f32;
+                let pad_y_norm = pad_y as f32 / target_h as f32;
+                let active_w_norm = new_w as f32 / target_w as f32;
+                let active_h_norm = new_h as f32 / target_h as f32;
+
                 for i in 0..num_boxes {
                     let score = *scores_data.add(i * 2 + 1); // index 1 is face probability
                     if score >= conf_threshold {
-                        let x1 = (*boxes_data.add(i * 4)).clamp(0.0, 1.0);
-                        let y1 = (*boxes_data.add(i * 4 + 1)).clamp(0.0, 1.0);
-                        let x2 = (*boxes_data.add(i * 4 + 2)).clamp(0.0, 1.0);
-                        let y2 = (*boxes_data.add(i * 4 + 3)).clamp(0.0, 1.0);
+                        // Un-project from letterboxed 320x240 space back to original image [0, 1]
+                        let lx1 = (*boxes_data.add(i * 4)).clamp(0.0, 1.0);
+                        let ly1 = (*boxes_data.add(i * 4 + 1)).clamp(0.0, 1.0);
+                        let lx2 = (*boxes_data.add(i * 4 + 2)).clamp(0.0, 1.0);
+                        let ly2 = (*boxes_data.add(i * 4 + 3)).clamp(0.0, 1.0);
+
+                        let x1 = ((lx1 - pad_x_norm) / active_w_norm).clamp(0.0, 1.0);
+                        let y1 = ((ly1 - pad_y_norm) / active_h_norm).clamp(0.0, 1.0);
+                        let x2 = ((lx2 - pad_x_norm) / active_w_norm).clamp(0.0, 1.0);
+                        let y2 = ((ly2 - pad_y_norm) / active_h_norm).clamp(0.0, 1.0);
+
                         let w = (x2 - x1).max(0.0);
                         let h = (y2 - y1).max(0.0);
-                        if w > 0.03 && h > 0.03 {
+                        let px_w = w * orig_w as f32;
+                        let px_h = h * orig_h as f32;
+                        let aspect = if px_h > 1.0 { px_w / px_h } else { 0.0 };
+
+                        if w > 0.025 && h > 0.025 && (0.4..=2.2).contains(&aspect) {
                             candidates.push(DetectedFace {
                                 bbox_x: x1,
                                 bbox_y: y1,
@@ -264,18 +323,22 @@ impl FaceEngine {
             return None;
         }
 
-        // Expand bbox slightly (15% margin) for full facial context
-        let pad_x = face.bbox_w * 0.15;
-        let pad_y = face.bbox_h * 0.15;
-        let x1 = ((face.bbox_x - pad_x) * orig_w as f32).max(0.0) as u32;
-        let y1 = ((face.bbox_y - pad_y) * orig_h as f32).max(0.0) as u32;
-        let x2 = ((face.bbox_x + face.bbox_w + pad_x) * orig_w as f32).min(orig_w as f32) as u32;
-        let y2 = ((face.bbox_y + face.bbox_h + pad_y) * orig_h as f32).min(orig_h as f32) as u32;
+        // Square crop centered on face with 15% margin so MobileFaceNet 112x112 avoids aspect distortion
+        let cx = (face.bbox_x + face.bbox_w * 0.5) * orig_w as f32;
+        let cy = (face.bbox_y + face.bbox_h * 0.5) * orig_h as f32;
+        let side = (face.bbox_w * orig_w as f32)
+            .max(face.bbox_h * orig_h as f32)
+            * 1.30;
+        let half = side * 0.5;
+        let x1 = (cx - half).max(0.0) as u32;
+        let y1 = (cy - half).max(0.0) as u32;
+        let x2 = (cx + half).min(orig_w as f32) as u32;
+        let y2 = (cy + half).min(orig_h as f32) as u32;
         let w = (x2.saturating_sub(x1)).max(1);
         let h = (y2.saturating_sub(y1)).max(1);
 
         let cropped = img.crop_imm(x1, y1, w, h);
-        let resized = cropped.resize_exact(112, 112, FilterType::Triangle).to_rgb8();
+        let resized = cropped.resize_exact(112, 112, FilterType::CatmullRom).to_rgb8();
 
         let mut input_tensor = vec![0.0f32; 3 * 112 * 112];
         let hw = 112 * 112;

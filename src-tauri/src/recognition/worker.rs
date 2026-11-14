@@ -90,6 +90,29 @@ impl FaceScanWorker {
         self.is_running.store(false, Ordering::Relaxed);
     }
 
+    pub fn rescan(&self) -> Result<bool, String> {
+        self.stop();
+        // Wait briefly if a scan iteration is mid-flight
+        std::thread::sleep(Duration::from_millis(100));
+
+        {
+            let mut conn = self.db.lock().map_err(|e| e.to_string())?;
+            MediaRepository::reset_face_scan(&mut conn).map_err(|e| e.to_string())?;
+        }
+
+        let face_thumb_dir = self
+            .app_handle
+            .path()
+            .app_cache_dir()
+            .unwrap_or_else(|_| PathBuf::from("."))
+            .join("faces");
+        if face_thumb_dir.exists() {
+            let _ = std::fs::remove_dir_all(&face_thumb_dir);
+        }
+
+        self.start_scan()
+    }
+
     pub fn get_progress(&self) -> Result<FaceScanProgress, String> {
         let conn = self.db.lock().map_err(|e| e.to_string())?;
         let (total_scannable, total_scanned, faces_found, people_identified) =
@@ -133,7 +156,22 @@ impl FaceScanWorker {
 
         std::thread::spawn(move || {
             log::info!("[FaceScanWorker] Background facial recognition scan started.");
-            let clusterer = FaceClusterer::new(0.65);
+            let clusterer = FaceClusterer::new(0.60);
+            let face_thumb_dir = app_handle
+                .path()
+                .app_cache_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("faces");
+            let _ = std::fs::create_dir_all(&face_thumb_dir);
+
+            // Load centroids once into memory and update incrementally instead of re-reading all embeddings per photo
+            let mut centroids = {
+                match db.lock() {
+                    Ok(conn) => MediaRepository::get_all_person_centroids(&conn).unwrap_or_default(),
+                    Err(_) => Vec::new(),
+                }
+            };
+            let mut processed_since_emit: usize = 0;
 
             while is_running.load(Ordering::Relaxed) {
                 let batch = {
@@ -155,16 +193,15 @@ impl FaceScanWorker {
                     break;
                 }
 
-                for (media_id, file_path) in &batch {
+                for (media_id, file_path, orientation) in &batch {
                     if !is_running.load(Ordering::Relaxed) {
                         break;
                     }
 
                     // Open image (skip unreadable/corrupt files gracefully)
-                    let img = match image::open(file_path) {
+                    let raw_img = match image::open(file_path) {
                         Ok(im) => im,
                         Err(_) => {
-                            // Mark as scanned to avoid infinite loop on corrupt media
                             if let Ok(mut conn) = db.lock() {
                                 let _ = MediaRepository::mark_media_face_scanned(&mut conn, &[*media_id]);
                             }
@@ -172,50 +209,112 @@ impl FaceScanWorker {
                         }
                     };
 
-                    // Detect faces
-                    let detected = engine.detect_faces(&img, 0.70);
-                    let mut face_data = Vec::new();
+                    // Apply EXIF orientation so faces are upright before detection & embedding
+                    let img = FaceEngine::apply_orientation(raw_img, *orientation);
+
+                    // Detect faces on upright, aspect-preserving letterboxed image
+                    let detected = engine.detect_faces(&img, 0.62);
+                    let mut oriented_faces = Vec::new();
+                    let mut db_face_data = Vec::new();
 
                     for face in &detected {
                         if let Some(emb) = engine.extract_embedding(&img, face) {
-                            face_data.push((face.clone(), emb));
+                            let (rbx, rby, rbw, rbh) = FaceEngine::untransform_bbox(
+                                face.bbox_x,
+                                face.bbox_y,
+                                face.bbox_w,
+                                face.bbox_h,
+                                *orientation,
+                            );
+                            let mut raw_face = face.clone();
+                            raw_face.bbox_x = rbx;
+                            raw_face.bbox_y = rby;
+                            raw_face.bbox_w = rbw;
+                            raw_face.bbox_h = rbh;
+
+                            oriented_faces.push(face.clone());
+                            db_face_data.push((raw_face, emb));
                         }
                     }
 
-                    // Insert detected faces into DB and assign/cluster
+                    // Insert detected faces into DB, assign/cluster, and pre-generate 200x200 face avatars
+                    let mut inserted_for_thumbs = Vec::new();
                     if let Ok(mut conn) = db.lock() {
-                        if !face_data.is_empty() {
+                        if !db_face_data.is_empty() {
                             if let Ok(inserted_ids) =
-                                MediaRepository::insert_media_faces(&mut conn, *media_id, &face_data)
+                                MediaRepository::insert_media_faces(&mut conn, *media_id, &db_face_data)
                             {
-                                if let Ok(centroids) = MediaRepository::get_all_person_centroids(&conn) {
-                                    for (idx, (_, emb)) in face_data.iter().enumerate() {
-                                        let face_id = inserted_ids[idx];
-                                        if let Some(pid) = clusterer.match_person(emb, &centroids) {
-                                            let _ = MediaRepository::assign_face_to_person(&conn, face_id, pid);
-                                        } else {
-                                            let _ = MediaRepository::create_person_with_face(&conn, None, face_id);
+                                for (idx, (_, emb)) in db_face_data.iter().enumerate() {
+                                    let face_id = inserted_ids[idx];
+                                    inserted_for_thumbs.push((face_id, oriented_faces[idx].clone()));
+
+                                    if let Some(pid) = clusterer.match_person(emb, &centroids) {
+                                        let _ = MediaRepository::assign_face_to_person(&conn, face_id, pid);
+                                        if let Some(c) = centroids.iter_mut().find(|c| c.person_id == pid) {
+                                            let n = c.face_count as f32;
+                                            let mut sum_norm = 0.0f32;
+                                            for i in 0..128 {
+                                                c.embedding[i] = c.embedding[i] * n + emb[i];
+                                                sum_norm += c.embedding[i] * c.embedding[i];
+                                            }
+                                            let norm = sum_norm.sqrt();
+                                            if norm > 1e-6 {
+                                                for i in 0..128 {
+                                                    c.embedding[i] /= norm;
+                                                }
+                                            }
+                                            c.face_count += 1;
                                         }
+                                    } else if let Ok(new_pid) =
+                                        MediaRepository::create_person_with_face(&conn, None, face_id)
+                                    {
+                                        centroids.push(crate::recognition::clustering::PersonCentroid {
+                                            person_id: new_pid,
+                                            embedding: *emb,
+                                            face_count: 1,
+                                        });
                                     }
                                 }
                             }
                         }
 
                         let _ = MediaRepository::mark_media_face_scanned(&mut conn, &[*media_id]);
+                        processed_since_emit += 1;
 
-                        // Emit periodic progress
-                        if let Ok((total_scannable, total_scanned, faces_found, people_identified)) =
-                            MediaRepository::get_face_scan_stats(&conn)
-                        {
-                            let progress = FaceScanProgress {
-                                total_scannable,
-                                total_scanned,
-                                faces_found,
-                                people_identified,
-                                current_file: Some(file_path.clone()),
-                                is_running: true,
-                            };
-                            let _ = app_handle.emit("recognition:progress", &progress);
+                        if processed_since_emit >= 5 {
+                            processed_since_emit = 0;
+                            if let Ok((total_scannable, total_scanned, faces_found, people_identified)) =
+                                MediaRepository::get_face_scan_stats(&conn)
+                            {
+                                let progress = FaceScanProgress {
+                                    total_scannable,
+                                    total_scanned,
+                                    faces_found,
+                                    people_identified,
+                                    current_file: Some(file_path.clone()),
+                                    is_running: true,
+                                };
+                                let _ = app_handle.emit("recognition:progress", &progress);
+                            }
+                        }
+                    }
+
+                    // Pre-generate upright 200x200 face avatar JPEGs while `img` is already decoded in RAM
+                    if !inserted_for_thumbs.is_empty() {
+                        use image::GenericImageView;
+                        let (w, h) = img.dimensions();
+                        for (face_id, oface) in inserted_for_thumbs {
+                            let pad_x = oface.bbox_w * 0.20;
+                            let pad_y = oface.bbox_h * 0.20;
+                            let x1 = ((oface.bbox_x - pad_x) * w as f32).max(0.0) as u32;
+                            let y1 = ((oface.bbox_y - pad_y) * h as f32).max(0.0) as u32;
+                            let x2 = ((oface.bbox_x + oface.bbox_w + pad_x) * w as f32).min(w as f32) as u32;
+                            let y2 = ((oface.bbox_y + oface.bbox_h + pad_y) * h as f32).min(h as f32) as u32;
+                            let crop_w = (x2.saturating_sub(x1)).max(1);
+                            let crop_h = (y2.saturating_sub(y1)).max(1);
+                            let cropped = img.crop_imm(x1, y1, crop_w, crop_h);
+                            let thumb = cropped.resize_exact(200, 200, image::imageops::FilterType::Triangle);
+                            let _ = thumb.save(face_thumb_dir.join(format!("{}.jpg", face_id)));
                         }
                     }
 

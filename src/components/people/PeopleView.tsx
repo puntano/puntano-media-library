@@ -1,4 +1,4 @@
-import React, { useEffect, useState, useMemo } from 'react';
+import React, { useEffect, useState, useMemo, useRef } from 'react';
 import {
   Users,
   Search,
@@ -12,6 +12,7 @@ import {
   User,
   Heart,
   Star,
+  RotateCcw,
 } from 'lucide-react';
 import { tauriApi } from '../../services/tauriApi';
 import { getFaceThumbnailUrl } from '../../services/thumbnailProtocol';
@@ -66,6 +67,11 @@ export const PeopleView: React.FC = () => {
   const [isMergeMode, setIsMergeMode] = useState<boolean>(false);
   const [selectedForMerge, setSelectedForMerge] = useState<number[]>([]);
   const [isMerging, setIsMerging] = useState<boolean>(false);
+
+  // Performance: progressive rendering & optional 2+ photos filter
+  const [onlyMultiPhoto, setOnlyMultiPhoto] = useState<boolean>(false);
+  const [visibleCount, setVisibleCount] = useState<number>(60);
+  const loadMoreRef = useRef<HTMLDivElement | null>(null);
 
   const { openLightbox, syncRevision, incrementSyncRevision } = useLibraryStore();
 
@@ -224,14 +230,60 @@ export const PeopleView: React.FC = () => {
     }
   };
 
+  const handleRescan = async () => {
+    if (
+      !confirm(
+        'Re-scan all photos for faces with improved accuracy?\n\nThis will clear existing face clusters and re-detect faces across your library.'
+      )
+    ) {
+      return;
+    }
+    try {
+      const started = await tauriApi.rescanFaces();
+      if (started) {
+        setIsScanning(true);
+        setPeople([]);
+      }
+    } catch (err) {
+      console.error('Failed to rescan faces:', err);
+    }
+  };
+
   const filteredPeople = useMemo(() => {
     const q = searchQuery.toLowerCase().trim();
-    if (!q) return people;
     return people.filter((p) => {
+      if (onlyMultiPhoto && p.face_count < 2) return false;
+      if (!q) return true;
       const name = p.name ? p.name.toLowerCase() : 'unnamed';
       return name.includes(q);
     });
-  }, [people, searchQuery]);
+  }, [people, searchQuery, onlyMultiPhoto]);
+
+  // Reset progressive window when filter changes
+  useEffect(() => {
+    setVisibleCount(60);
+  }, [searchQuery, onlyMultiPhoto]);
+
+  // Incrementally reveal more people as user scrolls down
+  useEffect(() => {
+    const el = loadMoreRef.current;
+    if (!el || visibleCount >= filteredPeople.length) return;
+    const observer = new IntersectionObserver(
+      (entries) => {
+        if (entries[0]?.isIntersecting) {
+          setVisibleCount((prev) => Math.min(prev + 60, filteredPeople.length));
+        }
+      },
+      { rootMargin: '300px' }
+    );
+    observer.observe(el);
+    return () => observer.disconnect();
+  }, [visibleCount, filteredPeople.length]);
+
+  const visiblePeople = useMemo(
+    () => filteredPeople.slice(0, visibleCount),
+    [filteredPeople, visibleCount]
+  );
 
   return (
     <div
@@ -574,26 +626,50 @@ export const PeopleView: React.FC = () => {
                       Pause Scan
                     </button>
                   ) : (
-                    <button
-                      onClick={handleStartScan}
-                      style={{
-                        display: 'inline-flex',
-                        alignItems: 'center',
-                        gap: '8px',
-                        padding: '9px 18px',
-                        borderRadius: '8px',
-                        backgroundColor: 'var(--accent-primary)',
-                        color: '#ffffff',
-                        border: 'none',
-                        cursor: 'pointer',
-                        fontWeight: 600,
-                        fontSize: '13px',
-                        boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
-                      }}
-                    >
-                      <Sparkles size={16} />
-                      Scan Faces
-                    </button>
+                    <>
+                      {people.length > 0 && (
+                        <button
+                          onClick={handleRescan}
+                          title="Re-scan all photos with improved face detection & clustering"
+                          style={{
+                            display: 'inline-flex',
+                            alignItems: 'center',
+                            gap: '6px',
+                            padding: '9px 14px',
+                            borderRadius: '8px',
+                            backgroundColor: 'var(--bg-secondary)',
+                            color: 'var(--text-primary)',
+                            border: '1px solid var(--border-color)',
+                            cursor: 'pointer',
+                            fontWeight: 600,
+                            fontSize: '13px',
+                          }}
+                        >
+                          <RotateCcw size={15} />
+                          Re-scan
+                        </button>
+                      )}
+                      <button
+                        onClick={handleStartScan}
+                        style={{
+                          display: 'inline-flex',
+                          alignItems: 'center',
+                          gap: '8px',
+                          padding: '9px 18px',
+                          borderRadius: '8px',
+                          backgroundColor: 'var(--accent-primary)',
+                          color: '#ffffff',
+                          border: 'none',
+                          cursor: 'pointer',
+                          fontWeight: 600,
+                          fontSize: '13px',
+                          boxShadow: '0 2px 8px rgba(0,0,0,0.15)',
+                        }}
+                      >
+                        <Sparkles size={16} />
+                        Scan Faces
+                      </button>
+                    </>
                   )}
                 </>
               )}
@@ -649,34 +725,54 @@ export const PeopleView: React.FC = () => {
             </div>
           )}
 
-          {/* Search Bar */}
-          <div style={{ position: 'relative', maxWidth: '360px', marginBottom: '24px' }}>
-            <Search
-              size={16}
-              style={{
-                position: 'absolute',
-                left: '12px',
-                top: '50%',
-                transform: 'translateY(-50%)',
-                color: 'var(--text-secondary)',
-              }}
-            />
-            <input
-              type="text"
-              value={searchQuery}
-              onChange={(e) => setSearchQuery(e.target.value)}
-              placeholder="Filter people by name..."
-              style={{
-                width: '100%',
-                padding: '9px 12px 9px 36px',
-                borderRadius: '8px',
-                border: '1px solid var(--border-color)',
-                backgroundColor: 'var(--bg-secondary)',
-                color: 'var(--text-primary)',
-                fontSize: '13px',
-                outline: 'none',
-              }}
-            />
+          {/* Search Bar & Filter */}
+          <div style={{ display: 'flex', alignItems: 'center', gap: '12px', flexWrap: 'wrap', marginBottom: '24px' }}>
+            <div style={{ position: 'relative', flex: '1 1 260px', maxWidth: '360px' }}>
+              <Search
+                size={16}
+                style={{
+                  position: 'absolute',
+                  left: '12px',
+                  top: '50%',
+                  transform: 'translateY(-50%)',
+                  color: 'var(--text-secondary)',
+                }}
+              />
+              <input
+                type="text"
+                value={searchQuery}
+                onChange={(e) => setSearchQuery(e.target.value)}
+                placeholder="Filter people by name..."
+                style={{
+                  width: '100%',
+                  padding: '9px 12px 9px 36px',
+                  borderRadius: '8px',
+                  border: '1px solid var(--border-color)',
+                  backgroundColor: 'var(--bg-secondary)',
+                  color: 'var(--text-primary)',
+                  fontSize: '13px',
+                  outline: 'none',
+                }}
+              />
+            </div>
+
+            {people.length > 0 && (
+              <button
+                onClick={() => setOnlyMultiPhoto((v) => !v)}
+                style={{
+                  padding: '8px 14px',
+                  borderRadius: '8px',
+                  border: onlyMultiPhoto ? '1px solid var(--accent-primary)' : '1px solid var(--border-color)',
+                  backgroundColor: onlyMultiPhoto ? 'rgba(59, 130, 246, 0.15)' : 'var(--bg-secondary)',
+                  color: onlyMultiPhoto ? 'var(--accent-primary)' : 'var(--text-secondary)',
+                  cursor: 'pointer',
+                  fontSize: '12px',
+                  fontWeight: 600,
+                }}
+              >
+                {onlyMultiPhoto ? '2+ photos only' : `All (${people.length})`}
+              </button>
+            )}
           </div>
 
           {/* People Grid */}
@@ -733,7 +829,7 @@ export const PeopleView: React.FC = () => {
                 gap: '24px 16px',
               }}
             >
-              {filteredPeople.map((person) => {
+              {visiblePeople.map((person) => {
                 const isSelected = selectedForMerge.includes(person.id);
                 return (
                   <div
@@ -902,6 +998,21 @@ export const PeopleView: React.FC = () => {
                   </div>
                 );
               })}
+            </div>
+          )}
+
+          {visibleCount < filteredPeople.length && (
+            <div
+              ref={loadMoreRef}
+              style={{
+                display: 'flex',
+                justifyContent: 'center',
+                padding: '24px 0',
+                color: 'var(--text-secondary)',
+                fontSize: '13px',
+              }}
+            >
+              Loading more people ({visibleCount} / {filteredPeople.length})...
             </div>
           )}
         </div>

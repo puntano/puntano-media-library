@@ -72,6 +72,11 @@ pub fn stop_face_scan(state: State<'_, AppState>) -> Result<(), String> {
 }
 
 #[tauri::command]
+pub fn rescan_faces(state: State<'_, AppState>) -> Result<bool, String> {
+    state.face_worker.rescan()
+}
+
+#[tauri::command]
 pub fn get_face_scan_progress(state: State<'_, AppState>) -> Result<FaceScanProgress, String> {
     state.face_worker.get_progress()
 }

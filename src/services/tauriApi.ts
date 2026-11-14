@@ -663,6 +663,11 @@ export const tauriApi = {
     await invoke('stop_face_scan');
   },
 
+  async rescanFaces(): Promise<boolean> {
+    if (!isTauri()) return true;
+    return await invoke<boolean>('rescan_faces');
+  },
+
   async getFaceScanProgress(): Promise<FaceScanProgress> {
     if (!isTauri()) {
       return {
